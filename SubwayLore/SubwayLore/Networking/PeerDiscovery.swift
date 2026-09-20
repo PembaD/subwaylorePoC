@@ -15,7 +15,7 @@ actor PeerDiscovery {
     private var browser: NetworkBrowser<Bonjour>?
     private var listenerTask: Task<Void, Never>?
     private var browserTask: Task<Void, Never>?
-    private var snapshot = DiscoverySnapshot()
+    private var reducer = DiscoveryReducer()
     private var snapshotContinuation: AsyncStream<DiscoverySnapshot>.Continuation?
     private var generation = UUID()
 
@@ -33,7 +33,7 @@ actor PeerDiscovery {
         AsyncStream(bufferingPolicy: .bufferingNewest(1)) { continuation in
             snapshotContinuation?.finish()
             snapshotContinuation = continuation
-            continuation.yield(snapshot)
+            continuation.yield(reducer.snapshot)
         }
     }
 
@@ -42,7 +42,8 @@ actor PeerDiscovery {
 
         let currentGeneration = UUID()
         generation = currentGeneration
-        setState(.waitingForPermission)
+        reducer.start()
+        publishSnapshot()
         record(.info, "Nearby discovery starting")
 
         listenerTask = Task { [weak self] in
@@ -61,8 +62,8 @@ actor PeerDiscovery {
         browserTask = nil
         listener = nil
         browser = nil
-        snapshot = DiscoverySnapshot()
-        snapshotContinuation?.yield(snapshot)
+        reducer.stop()
+        publishSnapshot()
         record(.info, "Nearby discovery stopped")
     }
 
@@ -139,8 +140,8 @@ actor PeerDiscovery {
         case .waiting(let error):
             handleWaiting(error, component: "listener")
         case .ready:
-            snapshot.listenerPort = port.map(\.rawValue)
-            if snapshot.peers.isEmpty { setState(.searching) }
+            reducer.listenerReady(port: port.map(\.rawValue))
+            publishSnapshot()
             record(.info, "Listener ready", metadata: ["port": port.map(String.init(describing:)) ?? "unknown"])
         case .failed(let error):
             handleFailure(error, component: "listener", generation: expectedGeneration)
@@ -163,7 +164,8 @@ actor PeerDiscovery {
         case .waiting(let error):
             handleWaiting(error, component: "browser")
         case .ready:
-            setState(snapshot.peers.isEmpty ? .searching : .peerFound)
+            reducer.browserReady()
+            publishSnapshot()
             record(.info, "Browser ready")
         case .failed(let error):
             handleFailure(error, component: "browser", generation: expectedGeneration)
@@ -177,42 +179,32 @@ actor PeerDiscovery {
     private func replaceEndpoints(_ endpoints: [Bonjour.Endpoint], generation expectedGeneration: UUID) {
         guard generation == expectedGeneration else { return }
 
-        let peers = endpoints
-            .filter { endpoint in
-                endpoint.name != identity.displayName
-            }
-            .map { endpoint in
+        let peers = endpoints.map { endpoint in
                 DiscoveredPeer(
                     id: endpoint.id,
                     displayName: endpoint.name,
                     domain: endpoint.domain
                 )
             }
-            .reduce(into: [String: DiscoveredPeer]()) { result, peer in
-                result[peer.id] = peer
-            }
-            .values
-            .sorted { $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending }
+        let changes = reducer.replacePeers(peers, localDisplayName: identity.displayName)
+        publishSnapshot()
 
-        let oldIDs = Set(snapshot.peers.map(\.id))
-        let newIDs = Set(peers.map(\.id))
-        snapshot.peers = peers
-        setState(peers.isEmpty ? .searching : .peerFound)
-
-        for id in newIDs.subtracting(oldIDs) {
+        for id in changes.addedIDs {
             record(.info, "Peer discovered", metadata: ["endpoint": id])
         }
-        for id in oldIDs.subtracting(newIDs) {
+        for id in changes.removedIDs {
             record(.info, "Peer removed", metadata: ["endpoint": id])
         }
     }
 
     private func handleWaiting(_ error: NWError, component: String) {
         if Self.isPermissionError(error) {
-            setState(.permissionUnavailable("Enable Local Network access for Subway Lore in Settings, then try again."))
+            reducer.permissionUnavailable("Enable Local Network access for Subway Lore in Settings, then try again.")
+            publishSnapshot()
             record(.error, "Local-network permission unavailable", metadata: ["component": component, "error": String(describing: error)])
         } else {
-            setState(.waitingForPermission)
+            reducer.waitForPermission()
+            publishSnapshot()
             record(.warning, "Discovery waiting", metadata: ["component": component, "error": String(describing: error)])
         }
     }
@@ -221,10 +213,11 @@ actor PeerDiscovery {
         guard generation == expectedGeneration else { return }
         let message = String(describing: error)
         if let networkError = error as? NWError, Self.isPermissionError(networkError) {
-            setState(.permissionUnavailable("Enable Local Network access for Subway Lore in Settings, then try again."))
+            reducer.permissionUnavailable("Enable Local Network access for Subway Lore in Settings, then try again.")
         } else {
-            setState(.failed("\(component.capitalized) failed: \(message)"))
+            reducer.fail("\(component.capitalized) failed: \(message)")
         }
+        publishSnapshot()
         record(.error, "Discovery component failed", metadata: ["component": component, "error": message])
     }
 
@@ -248,9 +241,8 @@ actor PeerDiscovery {
         record(.info, "Incoming connection accepted for Phase 3")
     }
 
-    private func setState(_ state: NearbyDiscoveryState) {
-        snapshot.state = state
-        snapshotContinuation?.yield(snapshot)
+    private func publishSnapshot() {
+        snapshotContinuation?.yield(reducer.snapshot)
     }
 
     private func record(
