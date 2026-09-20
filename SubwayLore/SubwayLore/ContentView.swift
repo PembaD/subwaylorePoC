@@ -9,20 +9,23 @@ import SwiftUI
 
 struct ContentView: View {
     var body: some View {
-        ZStack {
-            background
+        NavigationStack {
+            ZStack {
+                background
 
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 24) {
-                    header
-                    nearbyNetwork
-                    activityCards
-                    enterButton
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 24) {
+                        header
+                        nearbyNetwork
+                        activityCards
+                        enterButton
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.top, 18)
+                    .padding(.bottom, 28)
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 18)
-                .padding(.bottom, 28)
             }
+            .toolbar(.hidden, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
     }
@@ -152,7 +155,7 @@ struct ContentView: View {
 
     private var enterButton: some View {
         VStack(spacing: 13) {
-            Button(action: {}) {
+            NavigationLink(destination: NearbySessionView()) {
                 HStack {
                     Text("Enter this car")
                     Spacer()
@@ -223,7 +226,7 @@ private extension View {
     }
 }
 
-private extension Color {
+extension Color {
     static let loreInk = Color(red: 0.025, green: 0.039, blue: 0.055)
     static let loreGreen = Color(red: 0.0, green: 0.68, blue: 0.39)
     static let loreBlue = Color(red: 0.15, green: 0.55, blue: 1.0)
