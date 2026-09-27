@@ -3,6 +3,7 @@ import Network
 
 actor PeerDiscovery {
     static let serviceType = "_subwaylore._tcp"
+    private static let peerIDTXTKey = "peerID"
 
     typealias IncomingConnection = NetworkConnection<TLS>
     typealias IncomingConnectionHandler = @Sendable (IncomingConnection) async -> Void
@@ -71,7 +72,10 @@ actor PeerDiscovery {
         do {
             let provider = BonjourListenerProvider.bonjour(
                 name: identity.displayName,
-                type: Self.serviceType
+                type: Self.serviceType,
+                txtRecord: NWTXTRecord([
+                    Self.peerIDTXTKey: identity.id.uuidString,
+                ])
             )
             let parameters = NWParametersBuilder.parameters {
                 TLS {
@@ -182,11 +186,16 @@ actor PeerDiscovery {
         let peers = endpoints.map { endpoint in
                 DiscoveredPeer(
                     id: endpoint.id,
+                    peerID: endpoint.txtRecord[Self.peerIDTXTKey].flatMap(UUID.init(uuidString:)),
                     displayName: endpoint.name,
                     domain: endpoint.domain
                 )
             }
-        let changes = reducer.replacePeers(peers, localDisplayName: identity.displayName)
+        let changes = reducer.replacePeers(
+            peers,
+            localPeerID: identity.id,
+            localDisplayName: identity.displayName
+        )
         publishSnapshot()
 
         for id in changes.addedIDs {

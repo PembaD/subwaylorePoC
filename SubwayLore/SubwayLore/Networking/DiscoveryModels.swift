@@ -37,6 +37,7 @@ enum NearbyDiscoveryState: Equatable, Sendable {
 
 struct DiscoveredPeer: Identifiable, Equatable, Sendable {
     let id: String
+    let peerID: UUID?
     let displayName: String
     let domain: String
 }

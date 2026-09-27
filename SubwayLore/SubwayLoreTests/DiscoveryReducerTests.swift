@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import SubwayLore
 
@@ -21,13 +22,18 @@ struct DiscoveryReducerTests {
 
     @Test func localPeerIsFilteredAndDuplicatesAreCollapsed() {
         var reducer = DiscoveryReducer()
+        let localPeerID = UUID()
         let candidates = [
-            peer(id: "local", name: "Rider-LOCAL"),
+            peer(id: "local", peerID: localPeerID, name: "Rider-LOCAL (2)"),
             peer(id: "b", name: "Rider-B"),
             peer(id: "b", name: "Rider-B Updated"),
         ]
 
-        let changes = reducer.replacePeers(candidates, localDisplayName: "Rider-LOCAL")
+        let changes = reducer.replacePeers(
+            candidates,
+            localPeerID: localPeerID,
+            localDisplayName: "Rider-LOCAL"
+        )
 
         #expect(reducer.snapshot.peers == [peer(id: "b", name: "Rider-B Updated")])
         #expect(changes.addedIDs == ["b"])
@@ -44,6 +50,7 @@ struct DiscoveryReducerTests {
                 peer(id: "2", name: "alpha"),
                 peer(id: "1", name: "Alpha"),
             ],
+            localPeerID: UUID(),
             localDisplayName: "Local"
         )
 
@@ -54,11 +61,13 @@ struct DiscoveryReducerTests {
         var reducer = DiscoveryReducer()
         _ = reducer.replacePeers(
             [peer(id: "a", name: "A"), peer(id: "b", name: "B")],
+            localPeerID: UUID(),
             localDisplayName: "Local"
         )
 
         let changes = reducer.replacePeers(
             [peer(id: "b", name: "B"), peer(id: "c", name: "C")],
+            localPeerID: UUID(),
             localDisplayName: "Local"
         )
 
@@ -67,9 +76,13 @@ struct DiscoveryReducerTests {
 
     @Test func emptyPeerListReturnsToSearching() {
         var reducer = DiscoveryReducer()
-        _ = reducer.replacePeers([peer(id: "a", name: "A")], localDisplayName: "Local")
+        _ = reducer.replacePeers(
+            [peer(id: "a", name: "A")],
+            localPeerID: UUID(),
+            localDisplayName: "Local"
+        )
 
-        _ = reducer.replacePeers([], localDisplayName: "Local")
+        _ = reducer.replacePeers([], localPeerID: UUID(), localDisplayName: "Local")
 
         #expect(reducer.snapshot.peers.isEmpty)
         #expect(reducer.snapshot.state == .searching)
@@ -78,14 +91,18 @@ struct DiscoveryReducerTests {
     @Test func stopResetsAllDiscoveryState() {
         var reducer = DiscoveryReducer()
         reducer.listenerReady(port: 12_345)
-        _ = reducer.replacePeers([peer(id: "a", name: "A")], localDisplayName: "Local")
+        _ = reducer.replacePeers(
+            [peer(id: "a", name: "A")],
+            localPeerID: UUID(),
+            localDisplayName: "Local"
+        )
 
         reducer.stop()
 
         #expect(reducer.snapshot == DiscoverySnapshot())
     }
 
-    private func peer(id: String, name: String) -> DiscoveredPeer {
-        DiscoveredPeer(id: id, displayName: name, domain: "local.")
+    private func peer(id: String, peerID: UUID? = nil, name: String) -> DiscoveredPeer {
+        DiscoveredPeer(id: id, peerID: peerID, displayName: name, domain: "local.")
     }
 }
