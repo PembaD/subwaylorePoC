@@ -3,6 +3,7 @@ import SwiftUI
 struct NearbyNetworkCard: View {
     let identity: PeerIdentity
     let snapshot: DiscoverySnapshot
+    let onRefresh: () -> Void
 
     private let positions: [CGPoint] = [
         CGPoint(x: 0.18, y: 0.24),
@@ -154,6 +155,16 @@ struct NearbyNetworkCard: View {
                 .foregroundStyle(.white.opacity(0.58))
 
             Spacer()
+
+            Button(action: onRefresh) {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 12, weight: .bold))
+                    .frame(width: 28, height: 28)
+                    .background(Color.white.opacity(0.1), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(.white)
+            .accessibilityLabel("Refresh nearby discovery")
 
             if snapshot.peers.count > visiblePeers.count {
                 Text("+\(snapshot.peers.count - visiblePeers.count)")

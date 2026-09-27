@@ -88,7 +88,11 @@ struct ContentView: View {
     }
 
     private var nearbyNetwork: some View {
-        NearbyNetworkCard(identity: nearbyModel.identity, snapshot: nearbyModel.snapshot)
+        NearbyNetworkCard(
+            identity: nearbyModel.identity,
+            snapshot: nearbyModel.snapshot,
+            onRefresh: nearbyModel.restart
+        )
     }
 
     private var activityCards: some View {
