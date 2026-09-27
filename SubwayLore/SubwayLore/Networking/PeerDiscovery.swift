@@ -193,8 +193,7 @@ actor PeerDiscovery {
             }
         let changes = reducer.replacePeers(
             peers,
-            localPeerID: identity.id,
-            localDisplayName: identity.displayName
+            localPeerID: identity.id
         )
         publishSnapshot()
 
