@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct ContentView: View {
+    @StateObject private var nearbyModel = NearbySessionViewModel()
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -28,6 +30,7 @@ struct ContentView: View {
             .toolbar(.hidden, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
+        .task { nearbyModel.start() }
     }
 
     private var background: some View {
@@ -85,68 +88,27 @@ struct ContentView: View {
     }
 
     private var nearbyNetwork: some View {
-        HStack(spacing: 14) {
-            HStack(spacing: -10) {
-                compactAvatar("MK", color: .lorePurple)
-                compactAvatar("J", color: .loreBlue)
-                compactAvatar("AR", color: .loreOrange)
-            }
-
-            VStack(alignment: .leading, spacing: 3) {
-                Text("8 riders nearby")
-                    .font(.system(size: 16, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-
-                Text("This car is active")
-                    .font(.system(size: 12, weight: .medium, design: .rounded))
-                    .foregroundStyle(.white.opacity(0.46))
-            }
-
-            Spacer(minLength: 8)
-
-            Circle()
-                .fill(Color.loreGreen)
-                .frame(width: 8, height: 8)
-                .shadow(color: Color.loreGreen.opacity(0.8), radius: 5)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 68)
-        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
-        }
-    }
-
-    private func compactAvatar(_ initials: String, color: Color) -> some View {
-        Circle()
-            .fill(color.gradient)
-            .frame(width: 36, height: 36)
-            .overlay {
-                Text(initials)
-                    .font(.system(size: 10, weight: .black, design: .rounded))
-                    .foregroundStyle(.white)
-            }
-            .overlay {
-                Circle()
-                    .stroke(Color.loreInk, lineWidth: 2)
-            }
+        NearbyNetworkCard(
+            identity: nearbyModel.identity,
+            snapshot: nearbyModel.snapshot,
+            onRefresh: nearbyModel.restart
+        )
     }
 
     private var activityCards: some View {
         HStack(spacing: 12) {
             ActivityCard(
                 eyebrow: "CAR CHAT",
-                title: "3 new posts",
-                detail: "Join the conversation",
+                title: "Nearby chat",
+                detail: "Coming soon",
                 symbol: "bubble.left.and.bubble.right.fill",
                 color: .loreBlue
             )
 
             ActivityCard(
                 eyebrow: "TRIVIA",
-                title: "Starts in 0:42",
-                detail: "5 riders joined",
+                title: "Live games",
+                detail: "Coming soon",
                 symbol: "bolt.fill",
                 color: .loreOrange
             )
@@ -155,7 +117,7 @@ struct ContentView: View {
 
     private var enterButton: some View {
         VStack(spacing: 13) {
-            NavigationLink(destination: NearbySessionView()) {
+            NavigationLink(destination: NearbySessionView(model: nearbyModel)) {
                 HStack {
                     Text("Enter this car")
                     Spacer()
@@ -165,14 +127,11 @@ struct ContentView: View {
                 .padding(.horizontal, 20)
                 .frame(maxWidth: .infinity)
                 .frame(height: 58)
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .foregroundStyle(Color.loreInk)
             .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-
-            Label("Nearby connections work without internet", systemImage: "wifi.slash")
-                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white.opacity(0.42))
         }
     }
 }

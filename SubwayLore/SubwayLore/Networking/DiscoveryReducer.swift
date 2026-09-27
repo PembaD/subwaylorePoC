@@ -25,11 +25,11 @@ struct DiscoveryReducer: Sendable {
 
     mutating func replacePeers(
         _ candidates: [DiscoveredPeer],
-        localDisplayName: String
+        localPeerID: UUID
     ) -> DiscoveryPeerChanges {
         let oldIDs = Set(snapshot.peers.map(\.id))
         let peers = candidates
-            .filter { $0.displayName != localDisplayName }
+            .filter { $0.peerID != nil && $0.peerID != localPeerID }
             .reduce(into: [String: DiscoveredPeer]()) { result, peer in
                 result[peer.id] = peer
             }
