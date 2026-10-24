@@ -5,6 +5,19 @@ struct PeerIdentity: Codable, Hashable, Sendable {
 
     let id: UUID
     let displayName: String
+    var firstName: String? = nil
+    var lastName: String? = nil
+
+    func updatingProfile(firstName: String, lastName: String) -> PeerIdentity {
+        let first = firstName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let last = lastName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return PeerIdentity(
+            id: id,
+            displayName: "\(first) \(last)",
+            firstName: first,
+            lastName: last
+        )
+    }
 
     static func make() -> PeerIdentity {
         let id = UUID()
@@ -41,5 +54,9 @@ struct PeerIdentityStore {
             defaults.set(data, forKey: key)
         }
         return identity
+    }
+
+    func save(_ identity: PeerIdentity) throws {
+        defaults.set(try JSONEncoder().encode(identity), forKey: key)
     }
 }
