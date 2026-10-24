@@ -41,12 +41,33 @@ struct DiscoveryReducer: Sendable {
         let newIDs = Set(peers.map(\.id))
 
         snapshot.peers = peers
+        let visiblePeerIDs = Set(peers.compactMap(\.peerID))
+        snapshot.linkStates = snapshot.linkStates.filter { visiblePeerIDs.contains($0.key) }
         snapshot.state = peers.isEmpty ? .searching : .peerFound
 
         return DiscoveryPeerChanges(
             addedIDs: newIDs.subtracting(oldIDs),
             removedIDs: oldIDs.subtracting(newIDs)
         )
+    }
+
+    mutating func setLinkState(_ state: PeerLinkState, for peerID: UUID) {
+        guard snapshot.peers.contains(where: { $0.peerID == peerID }) else { return }
+        snapshot.linkStates[peerID] = state
+    }
+
+    mutating func setChatActive(_ isActive: Bool) {
+        snapshot.isChatActive = isActive
+        if !isActive {
+            snapshot.linkStates.removeAll()
+            snapshot.chatMessages.removeAll()
+        }
+    }
+
+    mutating func appendChatMessage(_ message: ChatMessage) {
+        guard !snapshot.chatMessages.contains(where: { $0.id == message.id }) else { return }
+        snapshot.chatMessages.append(message)
+        snapshot.chatMessages.sort { $0.sentAt < $1.sentAt }
     }
 
     mutating func waitForPermission() {

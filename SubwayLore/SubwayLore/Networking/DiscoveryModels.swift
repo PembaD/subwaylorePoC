@@ -42,8 +42,34 @@ struct DiscoveredPeer: Identifiable, Equatable, Sendable {
     let domain: String
 }
 
+struct ChatMessage: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let senderID: UUID
+    let senderName: String
+    let text: String
+    let sentAt: Date
+}
+
+enum PeerLinkState: Equatable, Sendable {
+    case discovered
+    case connecting
+    case connected
+}
+
 struct DiscoverySnapshot: Equatable, Sendable {
     var state: NearbyDiscoveryState = .notStarted
     var peers: [DiscoveredPeer] = []
+    var linkStates: [UUID: PeerLinkState] = [:]
     var listenerPort: UInt16?
+    var chatMessages: [ChatMessage] = []
+    var isChatActive = false
+
+    var connectedPeerCount: Int {
+        linkStates.values.count { $0 == .connected }
+    }
+
+    func linkState(for peer: DiscoveredPeer) -> PeerLinkState {
+        guard let peerID = peer.peerID else { return .discovered }
+        return linkStates[peerID] ?? .discovered
+    }
 }

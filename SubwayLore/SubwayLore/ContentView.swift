@@ -20,7 +20,6 @@ struct ContentView: View {
                         header
                         nearbyNetwork
                         activityCards
-                        enterButton
                     }
                     .padding(.horizontal, 20)
                     .padding(.top, 18)
@@ -97,41 +96,24 @@ struct ContentView: View {
 
     private var activityCards: some View {
         HStack(spacing: 12) {
-            ActivityCard(
-                eyebrow: "CAR CHAT",
-                title: "Nearby chat",
-                detail: "Coming soon",
-                symbol: "bubble.left.and.bubble.right.fill",
-                color: .loreBlue
-            )
+            NavigationLink(destination: NearbySessionView(model: nearbyModel)) {
+                ActivityCard(
+                    eyebrow: "CHAT",
+                    title: "Car Chat",
+                    detail: "Chat nearby",
+                    symbol: "bubble.left.and.bubble.right.fill",
+                    color: .loreBlue
+                )
+            }
+            .buttonStyle(.plain)
 
             ActivityCard(
-                eyebrow: "TRIVIA",
-                title: "Live games",
+                eyebrow: "GAME",
+                title: "Car Game",
                 detail: "Coming soon",
                 symbol: "bolt.fill",
                 color: .loreOrange
             )
-        }
-    }
-
-    private var enterButton: some View {
-        VStack(spacing: 13) {
-            NavigationLink(destination: NearbySessionView(model: nearbyModel)) {
-                HStack {
-                    Text("Enter this car")
-                    Spacer()
-                    Image(systemName: "arrow.right")
-                }
-                .font(.system(size: 18, weight: .bold, design: .rounded))
-                .padding(.horizontal, 20)
-                .frame(maxWidth: .infinity)
-                .frame(height: 58)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(Color.loreInk)
-            .background(.white, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         }
     }
 }

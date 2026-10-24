@@ -49,4 +49,16 @@ final class NearbySessionViewModel: ObservableObject {
             }
         }
     }
+
+    func joinChat(maximumPeers: Int = 8) {
+        Task { await discovery.joinChat(maximumPeers: maximumPeers) }
+    }
+
+    func leaveChat() {
+        Task { await discovery.leaveChat() }
+    }
+
+    func sendChatMessage(_ text: String) {
+        Task { await discovery.sendChatMessage(text) }
+    }
 }
