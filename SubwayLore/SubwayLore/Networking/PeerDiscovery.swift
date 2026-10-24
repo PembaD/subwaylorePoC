@@ -116,7 +116,7 @@ actor PeerDiscovery {
         for connectionID in activeConnectionIDByPeerID.values {
             guard let connection = connections[connectionID] else { continue }
             do {
-                try await connection.sendText(validated.text)
+                try await connection.sendChatMessage(message)
             } catch {
                 record(.warning, "Unable to send chat message", metadata: [
                     "connectionID": connectionID.uuidString,

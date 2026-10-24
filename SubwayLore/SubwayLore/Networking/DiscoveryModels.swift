@@ -48,6 +48,16 @@ struct ChatMessage: Identifiable, Equatable, Sendable {
     let senderName: String
     let text: String
     let sentAt: Date
+
+    func envelope(sequence: UInt64) throws -> PeerEnvelope {
+        PeerEnvelope(
+            id: id,
+            senderID: senderID,
+            sequence: sequence,
+            sentAt: sentAt,
+            body: .text(try TextMessage(text: text))
+        )
+    }
 }
 
 enum PeerLinkState: Equatable, Sendable {

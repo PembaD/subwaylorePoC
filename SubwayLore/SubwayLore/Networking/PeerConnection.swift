@@ -135,8 +135,9 @@ actor PeerConnection {
         }
     }
 
-    func sendText(_ text: String) async throws {
-        try await send(.text(try TextMessage(text: text)))
+    func sendChatMessage(_ message: ChatMessage) async throws {
+        sequence &+= 1
+        try await sendEnvelope(message.envelope(sequence: sequence))
     }
 
     func close(reason: String? = nil, notifyPeer: Bool = true) async {
@@ -157,12 +158,17 @@ actor PeerConnection {
             sequence: sequence,
             body: message
         )
+        try await sendEnvelope(envelope)
+    }
+
+    private func sendEnvelope(_ envelope: PeerEnvelope) async throws {
         let payload = try JSONEncoder().encode(envelope)
         let framed = try MessageFramer.frame(payload)
         try await connection.send(framed)
         record(.debug, "Protocol message sent", remotePeerID: remotePeer?.id, metadata: [
             "bytes": String(framed.count),
-            "sequence": String(sequence),
+            "sequence": String(envelope.sequence),
+            "messageID": envelope.id.uuidString,
         ])
     }
 
