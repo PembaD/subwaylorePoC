@@ -5,7 +5,7 @@ actor PeerDiscovery {
     static let serviceType = "_subwaylore._tcp"
     private static let peerIDTXTKey = "peerID"
 
-    private let identity: PeerIdentity
+    private var identity: PeerIdentity
     private let diagnostics: DiagnosticsRecorder
 
     private var listener: NetworkListener<TLS>?
@@ -38,6 +38,12 @@ actor PeerDiscovery {
             snapshotContinuation = continuation
             continuation.yield(reducer.snapshot)
         }
+    }
+
+    func updateIdentity(_ identity: PeerIdentity) async {
+        await stop()
+        self.identity = identity
+        start()
     }
 
     func start() {

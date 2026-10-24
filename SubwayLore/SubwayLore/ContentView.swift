@@ -9,6 +9,9 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var nearbyModel = NearbySessionViewModel()
+    @State private var showsProfile = false
+    @State private var hasCheckedProfile = false
+    @State private var isProfileSetup = false
 
     var body: some View {
         NavigationStack {
@@ -29,7 +32,24 @@ struct ContentView: View {
             .toolbar(.hidden, for: .navigationBar)
         }
         .preferredColorScheme(.dark)
-        .task { nearbyModel.start() }
+        .task {
+            nearbyModel.start()
+            guard !hasCheckedProfile else { return }
+            hasCheckedProfile = true
+            let identity = nearbyModel.identity
+            if (identity.firstName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || (identity.lastName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                isProfileSetup = true
+                showsProfile = true
+            }
+        }
+        .sheet(isPresented: $showsProfile) {
+            ProfileView(model: nearbyModel, isInitialSetup: isProfileSetup)
+                .presentationDetents([.height(570), .large])
+                .presentationBackground(Color.loreInk)
+                .presentationCornerRadius(28)
+                .presentationDragIndicator(.visible)
+        }
     }
 
     private var background: some View {
@@ -64,13 +84,20 @@ struct ContentView: View {
 
                 Spacer()
 
-                Circle()
-                    .fill(Color.white.opacity(0.08))
-                    .frame(width: 38, height: 38)
-                    .overlay {
-                        Image(systemName: "person.crop.circle")
-                            .foregroundStyle(.white.opacity(0.75))
-                    }
+                Button {
+                    isProfileSetup = false
+                    showsProfile = true
+                } label: {
+                    Circle()
+                        .fill(Color.white.opacity(0.08))
+                        .frame(width: 38, height: 38)
+                        .overlay {
+                            Image(systemName: "person.crop.circle")
+                                .foregroundStyle(.white.opacity(0.75))
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Edit profile")
             }
 
             VStack(alignment: .leading, spacing: 7) {
@@ -98,9 +125,8 @@ struct ContentView: View {
         HStack(spacing: 12) {
             NavigationLink(destination: NearbySessionView(model: nearbyModel)) {
                 ActivityCard(
-                    eyebrow: "CHAT",
-                    title: "Car Chat",
-                    detail: "Chat nearby",
+                    title: "Chat",
+                    detail: "Talk with nearby riders",
                     symbol: "bubble.left.and.bubble.right.fill",
                     color: .loreBlue
                 )
@@ -108,9 +134,8 @@ struct ContentView: View {
             .buttonStyle(.plain)
 
             ActivityCard(
-                eyebrow: "GAME",
-                title: "Car Game",
-                detail: "Coming soon",
+                title: "Play",
+                detail: "Games coming soon",
                 symbol: "bolt.fill",
                 color: .loreOrange
             )
@@ -119,7 +144,6 @@ struct ContentView: View {
 }
 
 private struct ActivityCard: View {
-    let eyebrow: String
     let title: String
     let detail: String
     let symbol: String
@@ -134,11 +158,6 @@ private struct ActivityCard: View {
                 .background(color.opacity(0.14), in: RoundedRectangle(cornerRadius: 11))
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(eyebrow)
-                    .font(.system(size: 10, weight: .bold, design: .rounded))
-                    .tracking(0.8)
-                    .foregroundStyle(.white.opacity(0.4))
-
                 Text(title)
                     .font(.system(size: 15, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
@@ -147,7 +166,7 @@ private struct ActivityCard: View {
                 Text(detail)
                     .font(.system(size: 11, weight: .medium, design: .rounded))
                     .foregroundStyle(.white.opacity(0.46))
-                    .lineLimit(1)
+                    .lineLimit(2, reservesSpace: true)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)

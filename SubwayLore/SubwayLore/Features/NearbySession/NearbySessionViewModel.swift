@@ -3,7 +3,8 @@ import Foundation
 @MainActor
 final class NearbySessionViewModel: ObservableObject {
     @Published private(set) var snapshot = DiscoverySnapshot()
-    let identity: PeerIdentity
+    @Published private(set) var identity: PeerIdentity
+    private let identityStore: PeerIdentityStore
 
     private let discovery: PeerDiscovery
     private var monitorTask: Task<Void, Never>?
@@ -13,6 +14,7 @@ final class NearbySessionViewModel: ObservableObject {
         diagnostics: DiagnosticsRecorder = DiagnosticsRecorder()
     ) {
         let identity = identityStore.loadOrCreate()
+        self.identityStore = identityStore
         self.identity = identity
         self.discovery = PeerDiscovery(identity: identity, diagnostics: diagnostics)
     }
@@ -60,5 +62,12 @@ final class NearbySessionViewModel: ObservableObject {
 
     func sendChatMessage(_ text: String) {
         Task { await discovery.sendChatMessage(text) }
+    }
+
+    func saveProfile(firstName: String, lastName: String) async throws {
+        let updated = identity.updatingProfile(firstName: firstName, lastName: lastName)
+        try identityStore.save(updated)
+        identity = updated
+        await discovery.updateIdentity(updated)
     }
 }
