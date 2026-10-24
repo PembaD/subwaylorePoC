@@ -64,18 +64,6 @@ struct NearbyNetworkCard: View {
             let center = CGPoint(x: geometry.size.width / 2, y: geometry.size.height * 0.54)
 
             ZStack {
-                ForEach(Array(visiblePeers.enumerated()), id: \.element.id) { index, _ in
-                    let destination = point(for: positions[index], in: geometry.size)
-                    Path { path in
-                        path.move(to: center)
-                        path.addLine(to: destination)
-                    }
-                    .stroke(
-                        peerColor(index).opacity(0.65),
-                        style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [5, 6])
-                    )
-                }
-
                 if visiblePeers.isEmpty {
                     Circle()
                         .stroke(Color.loreGreen.opacity(0.18), lineWidth: 1)
@@ -183,7 +171,7 @@ struct NearbyNetworkCard: View {
 
     private var statusTitle: String {
         switch snapshot.state {
-        case .peerFound: "Your car is forming"
+        case .peerFound: "Riders nearby"
         case .permissionUnavailable: "Local access needed"
         case .failed: "Discovery paused"
         case .notStarted: "Ready when you are"
