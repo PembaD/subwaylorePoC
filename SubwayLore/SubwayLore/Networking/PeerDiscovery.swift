@@ -7,6 +7,8 @@ actor PeerDiscovery {
 
     private var identity: PeerIdentity
     private let diagnostics: DiagnosticsRecorder
+    private let incomingHandler: @Sendable (NetworkConnection<TLS>) async -> Void
+    private var advertisedChat: Chat?
 
     private var listener: NetworkListener<TLS>?
     private var browser: NetworkBrowser<Bonjour>?
@@ -15,21 +17,17 @@ actor PeerDiscovery {
     private var reducer = DiscoveryReducer()
     private var snapshotContinuation: AsyncStream<DiscoverySnapshot>.Continuation?
     private var generation = UUID()
+    private var listenerGeneration = UUID()
     private var endpointByPeerID: [UUID: Bonjour.Endpoint] = [:]
-    private var pendingPeerIDs: Set<UUID> = []
-    private var connections: [UUID: PeerConnection] = [:]
-    private var connectionTasks: [UUID: Task<Void, Never>] = [:]
-    private var remotePeerIDByConnectionID: [UUID: UUID] = [:]
-    private var activeConnectionIDByPeerID: [UUID: UUID] = [:]
-    private var chatPeerIDs: Set<UUID> = []
-    private var maximumChatPeers = 8
 
     init(
         identity: PeerIdentity,
-        diagnostics: DiagnosticsRecorder
+        diagnostics: DiagnosticsRecorder,
+        incomingHandler: @escaping @Sendable (NetworkConnection<TLS>) async -> Void
     ) {
         self.identity = identity
         self.diagnostics = diagnostics
+        self.incomingHandler = incomingHandler
     }
 
     func snapshots() -> AsyncStream<DiscoverySnapshot> {
@@ -65,102 +63,72 @@ actor PeerDiscovery {
 
     func stop() async {
         generation = UUID()
+        listenerGeneration = UUID()
         listenerTask?.cancel()
         browserTask?.cancel()
         listenerTask = nil
         browserTask = nil
         listener = nil
         browser = nil
-        await closeAllConnections(reason: "Nearby discovery stopped")
-        chatPeerIDs.removeAll()
         endpointByPeerID.removeAll()
         reducer.stop()
         publishSnapshot()
         record(.info, "Nearby discovery stopped")
     }
 
-    func joinChat(maximumPeers: Int = 8) async {
-        guard !reducer.snapshot.isChatActive else { return }
-        maximumChatPeers = max(1, maximumPeers)
-        reducer.setChatActive(true)
-        refreshChatPeerSelection()
-        publishSnapshot()
-        record(.info, "Car chat joined", metadata: ["maximumPeers": String(maximumChatPeers)])
-        await connectToSelectedChatPeers(generation: generation)
-    }
-
-    func leaveChat() async {
-        guard reducer.snapshot.isChatActive else { return }
-        await closeAllConnections(reason: "Left car chat")
-        chatPeerIDs.removeAll()
-        reducer.setChatActive(false)
-        publishSnapshot()
-        record(.info, "Car chat left")
-    }
-
-    func sendChatMessage(_ rawText: String) async {
-        let text = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard reducer.snapshot.isChatActive,
-              let validated = try? TextMessage(text: text) else { return }
-
-        let message = ChatMessage(
-            id: UUID(),
-            senderID: identity.id,
-            senderName: identity.displayName,
-            text: validated.text,
-            sentAt: Date()
-        )
-        reducer.appendChatMessage(message)
-        publishSnapshot()
-
-        for connectionID in activeConnectionIDByPeerID.values {
-            guard let connection = connections[connectionID] else { continue }
-            do {
-                try await connection.sendChatMessage(message)
-            } catch {
-                record(.warning, "Unable to send chat message", metadata: [
-                    "connectionID": connectionID.uuidString,
-                    "error": String(describing: error),
-                ])
-            }
+    func advertise(_ chat: Chat?) async {
+        advertisedChat = chat
+        listenerGeneration = UUID()
+        listenerTask?.cancel()
+        listener = nil
+        let expected = generation
+        listenerTask = Task { [weak self] in
+            await self?.runListener(generation: expected)
         }
     }
 
     private func runListener(generation expectedGeneration: UUID) async {
+        let expectedListener = listenerGeneration
         do {
+            var txt = [
+                Self.peerIDTXTKey: identity.id.uuidString,
+                "protocolVersion": String(PeerEnvelope.currentProtocolVersion),
+            ]
+            if let chat = advertisedChat {
+                txt["chatID"] = chat.id.uuidString
+                txt["chatTitle"] = chat.title
+            }
             let provider = BonjourListenerProvider.bonjour(
                 name: identity.displayName,
                 type: Self.serviceType,
-                txtRecord: NWTXTRecord([
-                    Self.peerIDTXTKey: identity.id.uuidString,
-                ])
+                txtRecord: NWTXTRecord(txt)
             )
             let parameters = try TransportConfiguration.parameters()
 
             let listener = try NetworkListener(for: provider, using: parameters)
                 .onStateUpdate { [weak self] listener, state in
-                    Task { await self?.handleListenerState(state, port: listener.port, generation: expectedGeneration) }
+                    Task {
+                        guard let self, await self.isCurrentListener(expectedListener) else { return }
+                        await self.handleListenerState(state, port: listener.port, generation: expectedGeneration)
+                    }
                 }
                 .onServiceRegistrationUpdate { [weak self] _, change in
                     Task { await self?.handleRegistrationChange(change, generation: expectedGeneration) }
                 }
 
-            guard generation == expectedGeneration else { return }
+            guard generation == expectedGeneration, listenerGeneration == expectedListener else { return }
             self.listener = listener
 
             try await listener.run { [weak self] connection in
                 guard let self else { return }
-                await self.recordIncomingConnection(generation: expectedGeneration)
-                await self.startConnection(
-                    connection,
-                    direction: .incoming,
-                    expectedPeerID: nil,
-                    generation: expectedGeneration
-                )
+                guard await self.isCurrentGeneration(expectedGeneration) else { return }
+                guard await self.isCurrentListener(expectedListener) else { return }
+                await self.incomingHandler(connection)
             }
         } catch is CancellationError {
             // Expected when the nearby session stops.
         } catch {
+            guard listenerGeneration == expectedListener else { return }
             handleFailure(error, component: "listener", generation: expectedGeneration)
         }
     }
@@ -246,20 +214,21 @@ actor PeerDiscovery {
                     id: endpoint.id,
                     peerID: endpoint.txtRecord[Self.peerIDTXTKey].flatMap(UUID.init(uuidString:)),
                     displayName: endpoint.name,
-                    domain: endpoint.domain
+                    domain: endpoint.domain,
+                    chatID: endpoint.txtRecord["protocolVersion"] == String(PeerEnvelope.currentProtocolVersion)
+                        ? endpoint.txtRecord["chatID"].flatMap(UUID.init(uuidString:)) : nil,
+                    chatTitle: endpoint.txtRecord["chatTitle"]
                 )
             }
         let changes = reducer.replacePeers(
             peers,
             localPeerID: identity.id
         )
-        endpointByPeerID = Dictionary(
-            uniqueKeysWithValues: endpoints.compactMap { endpoint in
-                endpoint.txtRecord[Self.peerIDTXTKey]
-                    .flatMap(UUID.init(uuidString:))
-                    .map { ($0, endpoint) }
+        endpointByPeerID = endpoints.reduce(into: [:]) { result, endpoint in
+            if let id = endpoint.txtRecord[Self.peerIDTXTKey].flatMap(UUID.init(uuidString:)), id != identity.id {
+                result[id] = endpoint
             }
-        )
+        }
         publishSnapshot()
 
         for id in changes.addedIDs {
@@ -269,11 +238,12 @@ actor PeerDiscovery {
             record(.info, "Peer removed", metadata: ["endpoint": id])
         }
 
-        if reducer.snapshot.isChatActive {
-            refreshChatPeerSelection()
-            await connectToSelectedChatPeers(generation: expectedGeneration)
-        }
     }
+
+    func endpoint(for peerID: UUID) -> Bonjour.Endpoint? { endpointByPeerID[peerID] }
+
+    private func isCurrentGeneration(_ value: UUID) -> Bool { generation == value }
+    private func isCurrentListener(_ value: UUID) -> Bool { listenerGeneration == value }
 
     private func handleWaiting(_ error: NWError, component: String) {
         if Self.isPermissionError(error) {
@@ -312,230 +282,6 @@ actor PeerDiscovery {
         @unknown default:
             record(.warning, "Unknown service registration change")
         }
-    }
-
-    private func recordIncomingConnection(generation expectedGeneration: UUID) {
-        guard generation == expectedGeneration else { return }
-        record(.info, "Incoming TLS connection accepted")
-    }
-
-    private func openOutgoingConnection(
-        to endpoint: Bonjour.Endpoint,
-        peerID: UUID,
-        generation expectedGeneration: UUID
-    ) async {
-        guard generation == expectedGeneration,
-              reducer.snapshot.isChatActive,
-              chatPeerIDs.contains(peerID),
-              activeConnectionIDByPeerID[peerID] == nil,
-              !pendingPeerIDs.contains(peerID) else { return }
-        do {
-            let parameters = try TransportConfiguration.parameters()
-            let connection = NetworkConnection<TLS>(to: endpoint, using: parameters)
-            pendingPeerIDs.insert(peerID)
-            reducer.setLinkState(.connecting, for: peerID)
-            publishSnapshot()
-            record(.info, "Opening outgoing TLS connection", metadata: ["peerID": peerID.uuidString])
-            startConnection(
-                connection,
-                direction: .outgoing,
-                expectedPeerID: peerID,
-                generation: expectedGeneration
-            )
-        } catch {
-            pendingPeerIDs.remove(peerID)
-            reducer.setLinkState(.discovered, for: peerID)
-            publishSnapshot()
-            record(.error, "Unable to configure outgoing TLS connection", metadata: [
-                "peerID": peerID.uuidString,
-                "error": String(describing: error),
-            ])
-        }
-    }
-
-    private func startConnection(
-        _ networkConnection: NetworkConnection<TLS>,
-        direction: ConnectionDirection,
-        expectedPeerID: UUID?,
-        generation expectedGeneration: UUID
-    ) {
-        guard generation == expectedGeneration else { return }
-        let connection = PeerConnection(
-            connection: networkConnection,
-            direction: direction,
-            localIdentity: identity,
-            expectedPeerID: expectedPeerID,
-            diagnostics: diagnostics,
-            messageHandler: { [weak self] envelope in
-                await self?.receiveMessage(envelope)
-            }
-        )
-        let connectionID = connection.id
-        connections[connectionID] = connection
-        connectionTasks[connectionID] = Task { [weak self] in
-            await self?.runConnection(
-                connection,
-                connectionID: connectionID,
-                direction: direction,
-                expectedPeerID: expectedPeerID,
-                generation: expectedGeneration
-            )
-        }
-    }
-
-    private func runConnection(
-        _ connection: PeerConnection,
-        connectionID: UUID,
-        direction: ConnectionDirection,
-        expectedPeerID: UUID?,
-        generation expectedGeneration: UUID
-    ) async {
-        do {
-            let remotePeer = try await connection.handshake()
-            guard generation == expectedGeneration else {
-                await connection.close(reason: "Stale discovery generation", notifyPeer: false)
-                return
-            }
-
-            if try await acceptConnection(
-                connection,
-                connectionID: connectionID,
-                remotePeer: remotePeer,
-                direction: direction
-            ) {
-                try await connection.receiveUntilClosed()
-            }
-        } catch is CancellationError {
-            // Expected when discovery stops or a duplicate connection loses arbitration.
-        } catch {
-            record(.warning, "Peer connection ended", metadata: [
-                "connectionID": connectionID.uuidString,
-                "error": String(describing: error),
-            ])
-        }
-
-        await finishConnection(
-            connection,
-            connectionID: connectionID,
-            expectedPeerID: expectedPeerID
-        )
-    }
-
-    private func acceptConnection(
-        _ connection: PeerConnection,
-        connectionID: UUID,
-        remotePeer: ConnectedPeer,
-        direction: ConnectionDirection
-    ) async throws -> Bool {
-        guard reducer.snapshot.isChatActive, chatPeerIDs.contains(remotePeer.id) else {
-            await connection.close(reason: "Car chat is not active", notifyPeer: false)
-            return false
-        }
-
-        let preferredDirection = ConnectionArbitration.preferredDirection(
-            localPeerID: identity.id,
-            remotePeerID: remotePeer.id
-        )
-        guard direction == preferredDirection else {
-            record(.info, "Duplicate connection rejected by direction arbitration", metadata: [
-                "peerID": remotePeer.id.uuidString,
-                "direction": direction.rawValue,
-            ])
-            await connection.close(reason: "Duplicate connection", notifyPeer: false)
-            if preferredDirection == .outgoing,
-               let endpoint = endpointByPeerID[remotePeer.id] {
-                pendingPeerIDs.remove(remotePeer.id)
-                await openOutgoingConnection(
-                    to: endpoint,
-                    peerID: remotePeer.id,
-                    generation: generation
-                )
-            }
-            return false
-        }
-
-        if let activeID = activeConnectionIDByPeerID[remotePeer.id], activeID != connectionID {
-            record(.info, "Duplicate connection rejected", metadata: [
-                "peerID": remotePeer.id.uuidString,
-                "keptConnectionID": activeID.uuidString,
-            ])
-            await connection.close(reason: "Duplicate connection", notifyPeer: false)
-            return false
-        }
-
-        pendingPeerIDs.remove(remotePeer.id)
-        remotePeerIDByConnectionID[connectionID] = remotePeer.id
-        activeConnectionIDByPeerID[remotePeer.id] = connectionID
-        reducer.setLinkState(.connected, for: remotePeer.id)
-        publishSnapshot()
-        record(.info, "Secure peer connection established", metadata: [
-            "peerID": remotePeer.id.uuidString,
-            "direction": direction.rawValue,
-        ])
-        return true
-    }
-
-    private func finishConnection(
-        _ connection: PeerConnection,
-        connectionID: UUID,
-        expectedPeerID: UUID?
-    ) async {
-        await connection.close(notifyPeer: false)
-        connections.removeValue(forKey: connectionID)
-        connectionTasks.removeValue(forKey: connectionID)
-
-        let peerID = remotePeerIDByConnectionID.removeValue(forKey: connectionID) ?? expectedPeerID
-        if let peerID {
-            pendingPeerIDs.remove(peerID)
-            if activeConnectionIDByPeerID[peerID] == connectionID {
-                activeConnectionIDByPeerID.removeValue(forKey: peerID)
-                reducer.setLinkState(.discovered, for: peerID)
-                publishSnapshot()
-            }
-        }
-    }
-
-    private func refreshChatPeerSelection() {
-        let visiblePeerIDs = reducer.snapshot.peers.compactMap(\.peerID)
-        chatPeerIDs = Set(visiblePeerIDs.prefix(maximumChatPeers))
-    }
-
-    private func connectToSelectedChatPeers(generation expectedGeneration: UUID) async {
-        for peerID in chatPeerIDs {
-            guard let endpoint = endpointByPeerID[peerID] else { continue }
-            await openOutgoingConnection(to: endpoint, peerID: peerID, generation: expectedGeneration)
-        }
-    }
-
-    private func receiveMessage(_ envelope: PeerEnvelope) {
-        guard reducer.snapshot.isChatActive,
-              case .text(let textMessage) = envelope.body else { return }
-        let senderName = reducer.snapshot.peers.first(where: { $0.peerID == envelope.senderID })?.displayName
-            ?? "Nearby rider"
-        reducer.appendChatMessage(
-            ChatMessage(
-                id: envelope.id,
-                senderID: envelope.senderID,
-                senderName: senderName,
-                text: textMessage.text,
-                sentAt: envelope.sentAt
-            )
-        )
-        publishSnapshot()
-    }
-
-    private func closeAllConnections(reason: String) async {
-        let tasks = Array(connectionTasks.values)
-        let currentConnections = Array(connections.values)
-        for task in tasks { task.cancel() }
-        for connection in currentConnections {
-            await connection.close(reason: reason)
-        }
-        connectionTasks.removeAll()
-        connections.removeAll()
-        remotePeerIDByConnectionID.removeAll()
-        activeConnectionIDByPeerID.removeAll()
-        pendingPeerIDs.removeAll()
     }
 
     private func publishSnapshot() {

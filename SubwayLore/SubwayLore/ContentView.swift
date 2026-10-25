@@ -12,6 +12,10 @@ struct ContentView: View {
     @State private var showsProfile = false
     @State private var hasCheckedProfile = false
     @State private var isProfileSetup = false
+    @State private var showsNewChat = false
+    @State private var showsHistory = false
+    @State private var actionError: String?
+    @State private var isJoining = false
 
     var body: some View {
         NavigationStack {
@@ -30,6 +34,9 @@ struct ContentView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
+            .navigationDestination(item: $nearbyModel.presentedChat) { chat in
+                NearbySessionView(model: nearbyModel, chat: chat)
+            }
         }
         .preferredColorScheme(.dark)
         .task {
@@ -43,6 +50,19 @@ struct ContentView: View {
                 showsProfile = true
             }
         }
+        .sheet(isPresented: $showsNewChat) {
+            NewChatView(model: nearbyModel)
+                .presentationDetents([.height(420), .large])
+                .presentationBackground(Color.loreInk)
+        }
+        .sheet(isPresented: $showsHistory) {
+            ChatHistoryView(model: nearbyModel)
+        }
+        .alert("Unable to open chat", isPresented: Binding(
+            get: { actionError != nil }, set: { if !$0 { actionError = nil } }
+        )) {
+            Button("OK") { actionError = nil }
+        } message: { Text(actionError ?? "") }
         .sheet(isPresented: $showsProfile) {
             ProfileView(model: nearbyModel, isInitialSetup: isProfileSetup)
                 .presentationDetents([.height(570), .large])
@@ -122,23 +142,77 @@ struct ContentView: View {
     }
 
     private var activityCards: some View {
-        HStack(spacing: 12) {
-            NavigationLink(destination: NearbySessionView(model: nearbyModel)) {
-                ActivityCard(
-                    title: "Chat",
-                    detail: "Talk with nearby riders",
-                    symbol: "bubble.left.and.bubble.right.fill",
-                    color: .loreBlue
-                )
-            }
-            .buttonStyle(.plain)
+        VStack(spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Label("Live Chats", systemImage: "bubble.left.and.bubble.right.fill")
+                            .foregroundStyle(Color.loreBlue)
+                        Spacer(minLength: 0)
+                        Button { showsHistory = true } label: {
+                            Image(systemName: "clock.arrow.circlepath")
+                        }
+                        .accessibilityLabel("Chat history")
+                        .accessibilityIdentifier("chatHistory")
+                    }
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
 
-            ActivityCard(
-                title: "Play",
-                detail: "Games coming soon",
-                symbol: "bolt.fill",
-                color: .loreOrange
-            )
+                    if nearbyModel.liveChats.isEmpty {
+                        Text("No live chats nearby")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.45))
+                            .frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
+                    } else {
+                        ForEach(nearbyModel.liveChats.prefix(3)) { chat in
+                            Button {
+                                guard !isJoining else { return }
+                                isJoining = true
+                                Task {
+                                    defer { isJoining = false }
+                                    do { try await nearbyModel.joinChat(chat) }
+                                    catch { actionError = "Chat could not be opened. Please try again." }
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(chat.title).foregroundStyle(.white).lineLimit(1)
+                                    Text("\(chat.advertisingPeerIDs.count) nearby")
+                                        .foregroundStyle(.white.opacity(0.45))
+                                }
+                                .font(.system(size: 12, weight: .semibold, design: .rounded))
+                                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isJoining)
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, minHeight: 155, alignment: .topLeading)
+                .loreCard(padding: 14)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Live Games", systemImage: "bolt.fill")
+                        .font(.system(size: 13, weight: .bold, design: .rounded))
+                        .foregroundStyle(Color.loreOrange)
+                    Text("Games coming soon")
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.white.opacity(0.45))
+                }
+                .frame(maxWidth: .infinity, minHeight: 155, alignment: .topLeading)
+                .loreCard(padding: 14)
+            }
+
+            HStack(spacing: 12) {
+                Button { showsNewChat = true } label: {
+                    ActivityCard(title: "New Chat", detail: "Start a conversation",
+                                 symbol: "plus.bubble.fill", color: .loreBlue)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("newChat")
+                ActivityCard(title: "New Game", detail: "Games coming soon", symbol: "bolt.fill", color: .loreOrange)
+            }
+            if let error = nearbyModel.chatSnapshot.error {
+                Text(error).font(.caption).foregroundStyle(Color.loreOrange)
+            }
         }
     }
 }

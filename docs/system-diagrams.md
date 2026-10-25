@@ -1,212 +1,180 @@
 # Subway Lore system diagrams
 
-These diagrams describe the current proof-of-concept implementation. They reflect the code as it exists today, including the parts that are present but not yet exposed as user-facing features.
+These diagrams describe the chat-ID-based PoC. Games remain Coming Soon. There is no central server or permanent chat host.
 
-## 1. Overall project setup
+## 1. Project components
 
 ```mermaid
 flowchart TB
-    subgraph App["SubwayLore iOS app"]
-        direction TB
-
-        subgraph UI["SwiftUI presentation"]
-            ContentView
-            NearbyNetworkCard
-            NearbySessionView
-        end
-
-        subgraph Model["UI state boundary"]
-            ViewModel["NearbySessionViewModel<br/>@MainActor ObservableObject"]
-            Snapshot["DiscoverySnapshot<br/>peers, link states, chat messages"]
-        end
-
-        subgraph Coordination["Networking coordination"]
-            Discovery["PeerDiscovery actor<br/>discovery plus explicit chat lifecycle"]
-            Reducer["DiscoveryReducer<br/>snapshot state transitions"]
-            Arbitration["ConnectionArbitration<br/>chooses one initiator"]
-            PeerConn["PeerConnection actor<br/>handshake and receive loop"]
-        end
-
-        subgraph Wire["Transport and protocol"]
-            Transport["TransportConfiguration<br/>TLS, TCP, peer-to-peer"]
-            Framer["MessageFramer / FrameDecoder<br/>4-byte length-prefixed frames"]
-            Envelope["PeerEnvelope + PeerMessage<br/>versioned JSON messages"]
-        end
-
-        subgraph Support["Identity, trust, and observability"]
-            Identity["PeerIdentityStore<br/>persistent UUID + Rider name"]
-            Certificate["Bundled POC PKCS#12 identity<br/>shared certificate pin"]
-            Diagnostics["DiagnosticsRecorder<br/>in-memory + unified Logger"]
-        end
+    subgraph UI["SwiftUI presentation"]
+        Landing["ContentView<br/>nearby map + four cards"]
+        Create["NewChatView"]
+        History["ChatHistoryView"]
+        ChatUI["NearbySessionView<br/>participants, history, composer"]
+        Profile["ProfileView"]
     end
+    VM["NearbySessionViewModel<br/>main-actor published snapshots"]
+    Discovery["PeerDiscovery actor<br/>Bonjour devices + chat hints"]
+    Reducer["DiscoveryReducer<br/>discovery state only"]
+    Session["ChatSession actor<br/>create, join, resume, history sync"]
+    Store["ChatStore actor<br/>versioned atomic JSON in Application Support"]
+    Transport["PeerTransport actor<br/>admission reservations, connections, retries, liveness"]
+    Connection["PeerConnection actor<br/>TLS application handshake + framed protocol"]
+    Protocol["PeerEnvelope v2 / PeerMessage<br/>chat-scoped messages"]
+    Trust["TransportConfiguration<br/>shared pinned POC TLS identity"]
+    Identity["PeerIdentityStore<br/>UUID and optional name in UserDefaults"]
+    Logs["DiagnosticsRecorder<br/>in-memory + unified Logger"]
 
-    ContentView --> ViewModel
-    NearbySessionView --> ViewModel
-    ViewModel --> Snapshot
-    ViewModel --> Discovery
+    Landing --> VM
+    Create --> VM
+    History --> VM
+    ChatUI --> VM
+    Profile --> VM
+    Identity --> VM
+    VM --> Discovery
     Discovery --> Reducer
-    Reducer --> Snapshot
-    Snapshot --> NearbyNetworkCard
-    Discovery --> Arbitration
-    Discovery --> PeerConn
-    Discovery --> Transport
-    PeerConn --> Framer
-    PeerConn --> Envelope
-    Identity --> ViewModel
-    Identity --> Discovery
-    Certificate --> Transport
-    Discovery --> Diagnostics
-    PeerConn --> Diagnostics
-
-    Bonjour["Local network Bonjour<br/>_subwaylore._tcp"] <--> Discovery
-    Remote["Another SubwayLore app"] <--> Bonjour
-    Remote <--> Transport
+    VM --> Session
+    Session --> Store
+    Session --> Discovery
+    Session --> Transport
+    Discovery -->|incoming socket| Transport
+    Transport --> Connection
+    Connection --> Protocol
+    Connection --> Trust
+    Discovery --> Logs
+    Transport --> Logs
+    Connection --> Logs
 ```
 
-The UI does not call Network framework APIs directly. `NearbySessionViewModel` starts discovery, consumes the `AsyncStream<DiscoverySnapshot>`, and publishes the latest snapshot to SwiftUI. Opening Car Chat calls `joinChat(maximumPeers:)`; leaving it calls `leaveChat()`.
+The landing page only browses/advertises. New Chat creates an ID; a live row joins an existing ID; History previews saved messages without joining. Join / Resume explicitly reactivates that saved ID.
 
-## 2. Peer discovery lifecycle
+## 2. Device and live-chat discovery
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant UI as SwiftUI
-    participant VM as NearbySessionViewModel
-    participant PD as PeerDiscovery actor
-    participant L as TLS Bonjour listener
-    participant B as Bonjour browser
-    participant R as DiscoveryReducer
-    participant Other as Remote peer
+    participant UI as Landing page
+    participant VM as View model
+    participant PD as PeerDiscovery
+    participant Bonjour as Bonjour network
+    participant Session as ChatSession
 
     UI->>VM: start
-    VM->>PD: snapshots
-    PD-->>VM: initial snapshot
-    VM->>PD: start
-    PD->>R: start
-    PD->>L: advertise _subwaylore._tcp<br/>name + peerID TXT record
-    PD->>B: browse _subwaylore._tcp<br/>include TXT records
+    VM->>PD: start listener and browser
+    PD->>Bonjour: advertise peer UUID, name, protocol version
+    Bonjour-->>PD: currently visible endpoints and TXT records
+    PD->>PD: filter self / invalid identities, deduplicate endpoints
+    PD-->>VM: DiscoverySnapshot
+    VM-->>UI: nearby rider nodes, no connection edges
 
-    L-->>PD: listener ready with port
-    PD->>R: listenerReady(port)
-    PD-->>VM: searching snapshot
+    UI->>Session: create or join chat
+    Session->>Session: select stable chat ID
+    Note over Session: New chat is stored immediately; joining stores membership after admission
+    Session->>PD: advertise admitted chat ID and title
+    PD->>Bonjour: refresh local service advertisement
+    Bonjour-->>PD: remote participants advertise the same chat ID
+    PD-->>VM: peers with chat hints
+    VM->>VM: aggregate by chat ID
+    VM-->>UI: one live row per chat, at most 3 rows
 
-    Other-->>B: Bonjour service appears
-    B-->>PD: endpoint set changed
-    PD->>PD: map endpoints to DiscoveredPeer<br/>filter local peer UUID
-    PD->>R: replacePeers
-    R-->>PD: added and removed endpoint IDs
-    PD-->>VM: peerFound snapshot
-    VM-->>UI: render nearby rider node without an edge
-    Note over UI,PD: Discovery does not create peer connections
-
-    Other--xB: Bonjour service disappears
-    B-->>PD: endpoint set changed
-    PD->>R: replacePeers without remote peer
-    R->>R: remove stale per-peer link state
-    PD-->>VM: updated snapshot
-    VM-->>UI: remove peer node
+    UI->>Session: leave chat
+    Session->>PD: remove chat fields, keep device discovery
+    Note over UI,Session: Other participants continue advertising; local history remains
 ```
 
-### Discovery state model
+Live/inactive describes nearby observations. Missing advertisements do not establish that a chat is empty everywhere. There is no idle-expiration timer.
 
-```mermaid
-stateDiagram-v2
-    [*] --> notStarted
-    notStarted --> waitingForPermission: start
-    notStarted --> searching: listener or browser ready
-    waitingForPermission --> searching: network access becomes available
-    searching --> peerFound: at least one remote peer discovered
-    peerFound --> searching: all remote peers disappear
-    searching --> permissionUnavailable: local-network access denied
-    waitingForPermission --> permissionUnavailable: local-network access denied
-    searching --> failed: listener or browser fails
-    peerFound --> failed: listener or browser fails
-    permissionUnavailable --> notStarted: stop
-    failed --> notStarted: stop
-    searching --> notStarted: stop
-    peerFound --> notStarted: stop
-```
-
-Discovery and connection are deliberately separate. The landing page advertises and browses continuously but does not initiate connections. Per-peer link states change only while Car Chat is active.
-
-## 3. Secure network connection
-
-Opening Car Chat selects at most eight discovered peers and starts connection attempts. Both users must open Car Chat. If both sides create a connection, UUID arbitration keeps the connection whose direction both peers deterministically prefer.
+## 3. Chat admission and reconnection
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Low as Lower-UUID app
-    participant High as Higher-UUID app
+    participant C as Returning rider C
+    participant A as Participant A
+    participant B as Participant B
 
-    Note over Low,High: Both apps advertise and discover each other with Bonjour
-    Low->>Low: user opens Car Chat
-    High->>High: user opens Car Chat
-    Low->>Low: select up to 8 nearby peers
-    High->>High: select up to 8 nearby peers
-    Low->>Low: arbitration chooses outgoing
-    High->>High: arbitration chooses incoming
-    Low->>Low: link state = connecting
+    Note over A,B: A and B advertise chat X
+    C->>C: open saved chat X and select Join / Resume
+    C->>A: establish pinned mutually authenticated TLS
+    C->>A: hello and helloAccepted
+    A->>C: hello and helloAccepted
+    C->>A: joinChatRequest for X
+    A->>C: joinChatRequest for X
+    Note over C,A: Each side checks chat ID and reserves connection capacity
+    A->>C: joinChatAccepted with canonical chat metadata
+    C->>A: joinChatAccepted
+    C->>C: persist membership; advertise X
+    C->>B: same admission process for X
+    Note over A,C: Keep one accepted connection per UUID; prefer deterministic direction if duplicates race
 
-    Low->>High: open TCP connection to Bonjour endpoint
-    Low<<->>High: TLS 1 connection setup<br/>local PKCS#12 identity<br/>required peer authentication<br/>pinned shared certificate<br/>ALPN subwaylore-poc-v1
-
-    par Symmetric application handshake
-        Low->>High: framed JSON hello<br/>peerID, display name, capabilities
-        High->>Low: framed JSON hello<br/>peerID, display name, capabilities
+    loop While chat is open
+        C->>A: periodic ping
+        A->>C: pong
     end
-    Low->>High: helloAccepted with local peerID
-    High->>Low: helloAccepted with local peerID
-
-    Low->>Low: validate protocol version<br/>sender ID and expected peer ID
-    High->>High: validate protocol version<br/>sender ID
-    Low->>Low: accept preferred outgoing direction
-    High->>High: accept preferred incoming direction
-    Low->>Low: link state = connected
-    High->>High: link state = connected
-    Note over Low,High: Participant strip shows green connected outlines
-
-    loop Receive until closed
-        Low<<->>High: ping, pong, text, or goodbye envelope
-        Note over Low,High: Text is appended to ephemeral chat on receipt
-    end
-
-    alt Back navigation, goodbye, error, stop, or cancellation
-        Low--xHigh: end stream
-        Low->>Low: remove connection bookkeeping
-        High->>High: remove connection bookkeeping
-        Low->>Low: clear chat state and messages on leave
-        High->>High: link state = discovered if still in chat
-    end
+    A--xC: connection lost
+    C->>C: remove only that connection ID; backoff and retry
+    C->>A: fresh TLS and admission for the same chat ID
+    Note over A,C: Leaving invalidates the session generation and cancels retries
 ```
 
-### Per-peer link state and UI
+A valid first connection can use either direction, so the higher UUID can initiate admission. If simultaneous duplicate connections exist, both devices prefer the lower UUID's outgoing direction.
+
+There are at most eight distinct reserved/connected remote peers per device, with a separate bounded allowance for unidentified inbound handshakes. Admission times out after 15 seconds; retries use exponential delay and jitter capped near 30 seconds. Pings run about every 10 seconds; an unresponsive accepted connection is removed after about 35 seconds.
+
+## 4. Messages and missed-history synchronization
 
 ```mermaid
-stateDiagram-v2
-    [*] --> discovered: Bonjour endpoint visible
-    discovered --> connecting: Car Chat selects peer
-    connecting --> connected: TLS and app handshake complete
-    connecting --> discovered: setup or handshake fails
-    connected --> discovered: connection closes while chat remains active
-    discovered --> [*]: Bonjour endpoint disappears
-    connecting --> [*]: Bonjour endpoint disappears
-    connected --> [*]: Bonjour endpoint disappears or discovery stops
+sequenceDiagram
+    autonumber
+    participant C as Returning rider C
+    participant Local as C ChatStore
+    participant A as Participant A
+    participant B as Participant B
+
+    C->>Local: load saved chat X and messages
+    Local-->>C: immediate history display
+    Note over C,B: TLS and chat admission complete before synchronization
+    A->>C: historyInventory pages, up to 100 IDs each
+    C->>Local: compare IDs scoped to chat X
+    C->>A: historyRequest for missing IDs
+    A->>C: historyBatch, one original message per frame
+    C->>Local: atomic merge by chat ID and message ID
+    A->>C: historyComplete
+    B->>C: overlapping history inventory / records
+    C->>Local: merge again; existing messages remain single copies
+
+    C->>C: compose message; create one ID and timestamp
+    C->>Local: persist before broadcast
+    C->>A: chatText with original ID and chat X
+    C->>B: same ID, timestamp, and chat X
+    Note over C,B: Live reception continues during history transfer
 ```
 
-| Link state | Meaning | Current UI |
-| --- | --- | --- |
-| `discovered` | Bonjour can see the peer, but no secure session is active. | Node on landing page; neutral participant in chat |
-| `connecting` | A TLS connection or application handshake is in progress. | Neutral participant plus “Connecting…” |
-| `connected` | TLS and the `hello` / `helloAccepted` handshake succeeded. | Green participant outline and connected count |
+A history record retains its original author even when another peer forwards it. The transport sender is checked separately. Conflicting content with an existing message ID is rejected rather than overwriting the original.
 
-## Current implementation boundaries
+Inventory pages request only missing records. Transfers run separately from the receive loop to avoid blocking simultaneous synchronization. Retry asks peers to resend their inventory as well as sending the local inventory. Interrupted requests surface an error after 30 seconds.
 
-- Discovery, TLS setup, framing, handshake, connection arbitration, bounded chat connections, and text messaging are implemented.
-- Car Chat is the explicit connection boundary. Leaving the chat closes connections and clears its in-memory messages while discovery continues.
-- Car Game is visible as “Coming soon” and has no navigation or networking behavior.
-- Chat messages are sent to currently connected peers only. History is not persisted or synchronized to riders who join later.
-- Diagnostics are retained in memory and mirrored to Apple unified logging under subsystem `com.subwaylore.SubwayLore`.
-- `ping` and `pong` protocol types exist but currently have no user-facing behavior.
-- A failed connection returns to `discovered`; there is no visible per-peer failure state or explicit retry policy.
-- The bundled PKCS#12 identity and password are proof-of-concept material. Every installation trusts the same pinned certificate; this is not a production identity or trust design.
+## UI and storage behavior
+
+| Entry point | Behavior |
+| --- | --- |
+| Nearby map | Discovery-only nodes; map height reduced from 210 to 180 points |
+| Live Chats | Up to three live rows, automatic admission when tapped |
+| History button | Saved joined chats with previews and locally observed live/inactive status |
+| Saved chat preview | Read-only history until Join / Resume is selected |
+| New Chat | Name form, new UUID, persist and advertise |
+| Live Games / New Game | Inactive Coming Soon placeholders |
+| Chat back navigation | Close connections and remove own chat advertisement; preserve history |
+
+Chat messages have a chat ID, stable message ID, sender UUID/name, text, and original timestamp. Chats have an immutable ID, title, creation time, and creator attribution. Membership records track which chats this installation joined. Stored data is a versioned JSON document written atomically under Application Support.
+
+## Validation and limitations
+
+- Run Foundation-based unit tests without launching the app: `make test-core`.
+- Build the iOS app and tests with the project's usual `xcodebuild build-for-testing` command.
+- Three physical devices are needed to validate discovery, TLS, termination/relaunch, full-mesh recovery, and missed-message synchronization end to end.
+- All devices must run protocol v2; unscoped v1 clients are incompatible.
+- Synchronization can recover only history retained by reachable participants.
+- The eight-peer bound is local, not a globally coordinated room-size guarantee. There is no relay beyond direct peers.
+- Messages have no delivery receipts yet. Device clocks can differ; ordering uses timestamp and message ID.
+- The bundled shared TLS identity is POC material, and historical authorship is not cryptographically proven.
