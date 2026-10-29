@@ -8,17 +8,23 @@ struct TimeItGameView: View {
     @State private var countdown: Int?
     @State private var startInstant: ContinuousClock.Instant?
     @State private var hasTapped = false
+    @State private var stoppedAttempt: TimingAttempt?
+    @State private var revealedRoundID: UUID?
     @State private var isStarting = false
     @State private var actionError: String?
 
     private var state: GameSnapshot { model.gameSnapshot }
     private var isHost: Bool { lobby.hostPeerID == model.identity.id }
     private var timerKey: UUID? { state.roundStarted && state.phase != .ended ? state.round?.id : nil }
+    private var isShowingStoppedTime: Bool {
+        guard let stoppedAttempt else { return false }
+        return state.round?.id == stoppedAttempt.roundID && revealedRoundID != stoppedAttempt.roundID && state.phase != .ended
+    }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 24) {
-                if state.phase == .preparing || state.phase == .countdown || state.phase == .running {
+                if state.phase == .preparing || state.phase == .countdown || state.phase == .running || isShowingStoppedTime {
                     HStack {
                         Label("\(state.round?.players.count ?? state.players.count) players", systemImage: "person.3.fill")
                         Spacer()
@@ -29,8 +35,10 @@ struct TimeItGameView: View {
                     .padding(16)
                     .background(.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 18))
                 } else { players }
-                if state.phase == .results, let outcome = state.outcome {
+                if state.phase == .results, !isShowingStoppedTime, let outcome = state.outcome {
                     results(outcome)
+                    StandingsCard(rounds: model.completedRounds, kind: lobby.kind, gameID: lobby.id,
+                                  localPlayerID: model.identity.id, title: "Match standings")
                 } else if state.phase == .ended {
                     statusCard(title: "Game ended", detail: state.error ?? "Return to find another game.")
                     Button("Back to nearby riders") { dismiss() }.buttonStyle(.borderedProminent).tint(.loreOrange)
@@ -43,7 +51,7 @@ struct TimeItGameView: View {
                                               : "Waiting for the creator to start.")
                 }
 
-                if isHost, state.phase == .lobby || state.phase == .results {
+                if isHost, !isShowingStoppedTime, state.phase == .lobby || state.phase == .results {
                     Button {
                         guard !isStarting else { return }
                         isStarting = true
@@ -64,7 +72,7 @@ struct TimeItGameView: View {
                     if state.players.count < 2 {
                         Text("At least 2 players are needed.").font(.caption).foregroundStyle(.white.opacity(0.5))
                     }
-                } else if !isHost, state.phase == .lobby || state.phase == .results {
+                } else if !isHost, !isShowingStoppedTime, state.phase == .lobby || state.phase == .results {
                     Text("Waiting for the creator to start.").font(.subheadline).foregroundStyle(.white.opacity(0.5))
                 }
 
@@ -88,6 +96,8 @@ struct TimeItGameView: View {
             guard let roundID = timerKey else { return }
             startInstant = nil
             hasTapped = false
+            stoppedAttempt = nil
+            revealedRoundID = nil
             do {
                 for value in stride(from: 3, through: 1, by: -1) {
                     countdown = value
@@ -106,6 +116,13 @@ struct TimeItGameView: View {
             } catch {
                 if timerKey == roundID { countdown = nil }
             }
+        }
+        .task(id: stoppedAttempt?.roundID) {
+            guard let roundID = stoppedAttempt?.roundID else { return }
+            do {
+                try await Task.sleep(for: .milliseconds(1500))
+                revealedRoundID = roundID
+            } catch { /* Leaving or starting another round cancels the confirmation. */ }
         }
         .onChange(of: scenePhase) { _, phase in
             if phase == .background { model.leaveGame(lobby.id); dismiss() }
@@ -158,14 +175,27 @@ struct TimeItGameView: View {
                 Text("\(countdown)").font(.system(size: 80, weight: .black, design: .rounded)).foregroundStyle(.white)
                     .accessibilityLabel("Starting in \(countdown)")
             } else if hasTapped || state.localAttempt != nil {
+                let attempt = stoppedAttempt?.roundID == round.id ? stoppedAttempt : state.localAttempt
                 Image(systemName: "checkmark.circle.fill").font(.system(size: 48)).foregroundStyle(Color.loreGreen)
-                Text(state.localAttempt?.elapsedMilliseconds == nil ? "Time’s up" : "Locked in")
+                Text(attempt?.elapsedMilliseconds == nil ? "Time’s up" : "Locked in")
                     .font(.title2.bold()).foregroundStyle(.white)
-                Text("\(max(0, round.players.count - state.completedPlayerIDs.count)) players still timing")
+                if let elapsed = attempt?.elapsedMilliseconds {
+                    Text(String(format: "%.3f s", Double(elapsed) / 1000))
+                        .font(.system(size: 48, weight: .bold, design: .rounded)).monospacedDigit().foregroundStyle(.white)
+                        .accessibilityIdentifier("stoppedTime")
+                }
+                let remaining = max(0, round.players.count - state.completedPlayerIDs.count)
+                Text(remaining > 0 ? "\(remaining) players still timing" : "Results coming up…")
                     .font(.subheadline).foregroundStyle(.white.opacity(0.5))
             } else {
-                Text("Go!").font(.system(size: 30, weight: .black, design: .rounded)).foregroundStyle(.white)
-                Text("Trust your timing.").font(.subheadline).foregroundStyle(.white.opacity(0.6))
+                TimelineView(.animation(minimumInterval: 1.0 / 60)) { _ in
+                    Text(String(format: "%.2f", elapsedSeconds))
+                        .font(.system(size: 64, weight: .black, design: .rounded))
+                        .monospacedDigit().foregroundStyle(.white)
+                        .accessibilityIdentifier("runningTimer")
+                }
+                Text("Stop exactly at \(round.targetSeconds) seconds.")
+                    .font(.subheadline).foregroundStyle(.white.opacity(0.6))
                 Button(action: stop) {
                     Text("STOP").font(.system(size: 28, weight: .black, design: .rounded))
                         .foregroundStyle(Color.loreInk).frame(maxWidth: .infinity, minHeight: 110)
@@ -176,6 +206,12 @@ struct TimeItGameView: View {
             }
         }.frame(maxWidth: .infinity).padding(24)
             .background(Color.loreOrange.opacity(0.07), in: RoundedRectangle(cornerRadius: 26))
+    }
+
+    private var elapsedSeconds: Double {
+        guard let startInstant else { return 0 }
+        let elapsed = startInstant.duration(to: ContinuousClock.now).components
+        return max(0, Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18)
     }
 
     private func results(_ outcome: RoundOutcome) -> some View {
@@ -217,10 +253,13 @@ struct TimeItGameView: View {
         guard !hasTapped, let startInstant, let roundID = state.round?.id, state.phase == .running else { return }
         let elapsed = startInstant.duration(to: ContinuousClock.now).components
         let milliseconds = Int((Double(elapsed.seconds) * 1000 + Double(elapsed.attoseconds) / 1e15).rounded())
+        let submittedMilliseconds = milliseconds <= TimeItRules.maximumMilliseconds ? milliseconds : nil
+        stoppedAttempt = TimingAttempt(gameID: lobby.id, roundID: roundID, playerID: model.identity.id,
+                                       elapsedMilliseconds: submittedMilliseconds)
         hasTapped = true
         Task {
             do {
-                try await model.submitGameAttempt(roundID, milliseconds: milliseconds <= TimeItRules.maximumMilliseconds ? milliseconds : nil)
+                try await model.submitGameAttempt(roundID, milliseconds: submittedMilliseconds)
             } catch { actionError = "Your attempt could not be submitted." }
         }
     }

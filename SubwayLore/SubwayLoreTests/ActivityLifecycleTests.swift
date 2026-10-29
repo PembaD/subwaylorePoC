@@ -78,7 +78,8 @@ struct ActivityLifecycleTests {
         let coordinator = ActivityCoordinator(transport: transport, advertising: FakeActivityAdvertising())
         let identity = PeerIdentity.make()
         let clock = ManualSessionClock()
-        let session = GameSession(identity: identity, coordinator: coordinator, clock: clock)
+        let resultsStore = GameResultsStore()
+        let session = GameSession(identity: identity, coordinator: coordinator, clock: clock, resultsStore: resultsStore)
         let lobby = try await session.create()
         let guestID = UUID()
         let rejected = await transport.connect(ConnectedPeer(id: guestID, displayName: "Guest", capabilities: [], activity: .game(lobby)))
@@ -100,6 +101,11 @@ struct ActivityLifecycleTests {
         #expect(result.outcome?.winnerIDs == [identity.id])
         #expect(result.localAttempt?.elapsedMilliseconds == round.targetSeconds * 1000)
         #expect(result.completedPlayerIDs == [identity.id, guestID])
+        #expect(try await resultsStore.rounds() == [result.outcome?.completedRound()].compactMap { $0 })
+        // A retransmitted attempt resends the result without incrementing standings.
+        await transport.emit(.message(PeerEnvelope(senderID: guestID, sequence: 3,
+            body: .game(GamePacket(gameID: lobby.id, event: .attempt(guestAttempt))))))
+        #expect(try await resultsStore.rounds().count == 1)
         await session.leave()
         await eventually { await clock.pendingCount == 0 }
     }

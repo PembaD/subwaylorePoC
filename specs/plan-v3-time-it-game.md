@@ -2,7 +2,7 @@
 
 ## Goal
 
-Add a nearby multiplayer game with the exact display name **Time |t!**. New Game opens a themed game-picker sheet. Selecting Time |t! creates a lobby; other riders join from Live Games. The creator presses Start to begin a round. Each player tries to stop a hidden timer as close as possible to the shared target time.
+Add a nearby multiplayer game with the exact display name **Time |t!**. New Game opens a themed game-picker sheet. Selecting Time |t! creates a lobby; other riders join from Live Games. The creator presses Start to begin a round. Each player watches a running timer and tries to stop exactly at the shared target time; the smallest timing error wins.
 
 The initial implementation follows this design. Core rules and protocol tests run with `make test-core`; multiplayer timing and lifecycle behavior still require physical-device verification.
 
@@ -11,13 +11,13 @@ The initial implementation follows this design. Core rules and protocol tests ru
 - Support multiple players, with a minimum of two including the creator.
 - Maximum **eight players total**: creator plus seven guests.
 - The creator participates and acts as authority for this game. No permanent car host is introduced.
-- Each round randomly selects a whole-second target `x`, inclusive from **3 through 10 seconds**. The creator's device chooses it once.
+- Each round randomly selects a whole-second target `x`, inclusive from **1 through 6 seconds**. The creator's device chooses it once.
 - Players can join automatically while the lobby is waiting and space remains.
 - Only the creator sees an enabled **Start game** button. It is enabled once at least two players are admitted and connected.
 - Guests see “Waiting for the creator to start.” There is no manual Ready button.
 - Starting freezes the roster, closes admission, and distributes the round ID and target. Devices acknowledge receipt automatically before the countdown starts.
 - Every participating device displays **3 → 2 → 1 → Go**, then starts its local timer.
-- Elapsed time stays hidden. The player taps **Stop** when they think the target has elapsed; no holding is required.
+- Elapsed time is visible while running. The player taps **Stop** at the target; no holding is required. The display shows hundredths, and scoring uses the captured milliseconds.
 - Each player has one attempt. Stop is disabled before Go and after the first valid tap.
 - Score each valid attempt using `abs(elapsedMilliseconds - targetSeconds * 1000)`. The smallest error wins.
 - Equal smallest errors at millisecond precision produce joint winners. Display all tied winners.
@@ -26,9 +26,9 @@ The initial implementation follows this design. Core rules and protocol tests ru
 - After results, return to a lobby where players may leave and new guests may join. Only the creator starts the next round, with a fresh round ID and target.
 - A guest leaving or backgrounding forfeits that round; the other players continue. A submitted attempt remains eligible if already accepted before disconnect.
 - The creator leaving, backgrounding, or losing availability ends the match for everyone. There is no host migration or mid-round timer resumption.
-- Game history, persistent scores, spectators, and tournaments are outside this PoC.
+- Verified completed rounds are saved locally for per-game leaderboards and head-to-head records. Spectators, tournaments, and global score synchronization remain outside this PoC.
 
-Random integer targets, hidden elapsed time, eight-player capacity, millisecond ties, and the 20-second timeout are proposed defaults. The name, multiplayer participation, and creator-controlled Start are required behavior.
+Current defaults are integer targets from 1–6 seconds, visible elapsed time, eight-player capacity, millisecond ties, and a 20-second timeout. The name, multiplayer participation, and creator-controlled Start are required behavior.
 
 ## UI flow
 
@@ -70,7 +70,7 @@ flowchart TD
 - Guests: “Waiting for the creator to start.”
 - Preparing: show target and “Starting…” while protocol acknowledgements complete.
 - Countdown: large 3 / 2 / 1; target remains visible and Stop is disabled.
-- Running: target, “Trust your timing,” and large Stop button; no elapsed counter.
+- Running: target, a visible monotonic elapsed counter, and a large Stop button.
 - Submitted: “Locked in,” no second attempt, and a count of players still timing.
 - Results: ranked player names, elapsed times, absolute errors, forfeits, and winner or tied winners.
 - Next round: lobby opens again; creator starts when satisfied with the roster.
@@ -175,7 +175,7 @@ sequenceDiagram
     H->>A: roster now includes H, A, B
 
     H->>H: creator presses Start
-    H->>H: freeze roster and choose target in 3...10
+    H->>H: freeze roster and choose target in 1...6
     H->>A: roundPrepared
     H->>B: same roundPrepared
     A->>H: automatic receipt acknowledgement

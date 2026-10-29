@@ -5,11 +5,12 @@ enum TimeItError: Error, Equatable {
 }
 
 enum TimeItRules {
+    static let targetRange = 1...6
     static let maximumMilliseconds = 20_000
 
     static func validate(_ round: TimeItRound, hostID: UUID) throws {
         let ids = round.players.map(\.id)
-        guard (3...10).contains(round.targetSeconds), (2...GameLobby.maximumPlayers).contains(ids.count),
+        guard targetRange.contains(round.targetSeconds), (2...GameLobby.maximumPlayers).contains(ids.count),
               Set(ids).count == ids.count, ids.contains(hostID), round.players.allSatisfy(\.isConnected) else {
             throw TimeItError.invalidRound
         }

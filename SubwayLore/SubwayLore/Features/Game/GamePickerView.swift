@@ -31,7 +31,7 @@ struct GamePickerView: View {
                         .font(.system(size: 28, weight: .bold)).foregroundStyle(Color.loreOrange)
                     VStack(alignment: .leading, spacing: 7) {
                         Text("Time |t!").font(.system(size: 22, weight: .black, design: .rounded)).foregroundStyle(.white)
-                        Text("Stop closest to the target. Trust your timing.")
+                        Text("Watch the timer. Stop exactly at the target: 1–6 seconds.")
                             .font(.subheadline).foregroundStyle(.white.opacity(0.55)).multilineTextAlignment(.leading)
                         Text(isCreating ? "Creating…" : "2–8 players · Creator starts")
                             .font(.caption.bold()).foregroundStyle(Color.loreOrange)

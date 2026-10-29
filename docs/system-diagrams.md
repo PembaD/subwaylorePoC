@@ -175,13 +175,14 @@ Inventory pages request only missing records. Transfers run separately from the 
 | Entry point | Behavior |
 | --- | --- |
 | Nearby map | Discovery-only nodes; map height reduced from 210 to 180 points |
-| Live Chats | Up to three live rows, automatic admission when tapped |
+| Live Chats | Up to three live rows with join chevrons, automatic admission when tapped; compact empty state |
 | History button | Saved joined chats with previews and locally observed live/inactive status |
 | Saved chat preview | Read-only history until Join / Resume is selected |
 | New Chat | Open immediately with a new UUID; initially creator’s first name or “New chat,” then a first-message excerpt |
-| Live Games | Up to three waiting/playing games, with count and availability |
+| Live Games | Up to three waiting/playing games, with count, availability, and chevrons on joinable rows; compact empty state |
+| Live Games trophy button | Locally saved per-game leaderboards and your head-to-head records |
 | New Game | Themed game-picker sheet; Time &#124;t! creates an eight-player lobby |
-| Game screen | Creator Start, local countdown/hidden timer, Stop, results and next round |
+| Game screen | Creator Start, countdown, visible elapsed timer, Stop, results, match standings/head-to-head, next round |
 | Chat back navigation | Close connections and remove own chat advertisement; preserve history |
 
 Chat messages have a chat ID, stable message ID, sender UUID/name, text, and original timestamp. Chats have an immutable ID, initial fallback title, creation time, and creator attribution. The displayed title is derived from the first message (timestamp, then message ID), normalized to one line and limited to 40 characters and 240 UTF-8 bytes for Bonjour. Later messages update the separate history preview, not the title. Synchronizing an earlier message can reconcile the first-message title across devices. Membership records track which chats this installation joined. Stored data is a versioned JSON document written atomically under Application Support.
@@ -201,7 +202,7 @@ sequenceDiagram
     H-->>A: admitted roster
     H-->>B: admitted roster
     H->>H: creator presses Start
-    H->>A: prepare frozen roster and target in 3...10
+    H->>A: prepare frozen roster and target in 1...6
     H->>B: same preparation
     A-->>H: automatic preparation acknowledgement
     B-->>H: automatic preparation acknowledgement
@@ -222,6 +223,29 @@ Only the creator advertises a game lobby. Admission reserves a seat before accep
 Every player measures their own interval with a monotonic clock, so packet latency is not added to the attempt. One accepted attempt per player is immutable. Equal smallest millisecond errors produce joint winners. Players time out after 20 seconds; the creator allows two seconds of transport grace before forfeiting missing records. A guest departure preserves an already accepted attempt or creates a forfeit, while other players continue. Creator departure/backgrounding ends the game.
 
 Preparation has a 10-second acknowledgement deadline. Results retry at two-second intervals up to five times. Guests have a bounded result-wait deadline. Stale round/session IDs cannot change a new game, and game packets are isolated from chat history.
+
+### Saved game results and leaderboards
+
+```mermaid
+flowchart LR
+    Outcome[Verified Time It outcome] --> Adapter[Game-specific placement adapter]
+    Future[Future game outcome] --> Other[That game's placement adapter]
+    Adapter --> Round[CompletedRound: kind, game ID, round ID, players, placements, measurements]
+    Other --> Round
+    Round --> Store[GameResultsStore: atomic versioned JSON]
+    Store --> Standings[Per-game wins and rounds played]
+    Store --> Pairs[Pairwise wins / draws / losses]
+    Standings --> Match[Results screen: current match]
+    Pairs --> Match
+    Standings --> Saved[Live Games trophy: saved leaderboard]
+    Pairs --> Saved
+```
+
+The creator converts its finalized outcome; guests independently recompute the outcome before saving. Records are keyed by game kind, game ID, and round ID. Repeated results do not add wins; conflicting records cannot replace an accepted result. Guests acknowledge only after a successful local save. Save failures remain visible and a repeated result retries the write.
+
+`GameResultsStore` persists `game-results-v1.json` under Application Support/SubwayLore. Shared standings use placements, so future games can supply their own scoring adapter without changing aggregation or storage. Wins include tied first places. Pairwise records compare finish positions even when neither player won the overall round; a finisher beats a forfeit, and two forfeits do not count as a draw.
+
+Each device retains only rounds it participated in and received. New joiners do not receive earlier round history, and there is no global leaderboard or cross-device stats synchronization. Match standings filter local records by game ID; the trophy view includes locally retained matches for the selected game kind.
 
 ## Validation and limitations
 
