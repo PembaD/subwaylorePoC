@@ -147,7 +147,7 @@ struct ContentView: View {
     private var activityCards: some View {
         VStack(spacing: 12) {
             HStack(alignment: .top, spacing: 12) {
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Label("Live Chats", systemImage: "bubble.left.and.bubble.right.fill")
                             .foregroundStyle(Color.loreBlue)
@@ -188,7 +188,7 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, minHeight: 65, alignment: .topLeading)
                 .loreCard(padding: 14)
 
-                VStack(alignment: .leading, spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Label("Live Games", systemImage: "bolt.fill")
                         Spacer(minLength: 0)
@@ -265,26 +265,29 @@ private struct LiveActivityRow: View {
     var isJoinable = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.system(size: 13, weight: .bold, design: .rounded))
-                .foregroundStyle(.white.opacity(isJoinable ? 1 : 0.6))
-                .lineLimit(2)
-            Text(detail)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
-                .foregroundStyle(.white.opacity(0.55))
-                .lineLimit(1)
-            HStack {
-                Text(isJoinable ? "Join" : "Playing / Full")
-                Spacer(minLength: 0)
-                if isJoinable { Image(systemName: "arrow.right") }
+        HStack(spacing: 6) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.system(size: 12, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(isJoinable ? 1 : 0.6))
+                    .lineLimit(1)
+                Text(detail)
+                    .font(.system(size: 10, weight: .medium, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.55))
+                    .lineLimit(1)
             }
-            .font(.system(size: 11, weight: .bold, design: .rounded))
+            Spacer(minLength: 0)
+            VStack(spacing: 2) {
+                Image(systemName: isJoinable ? "arrow.right" : "lock.fill")
+                    .font(.system(size: 11, weight: .bold))
+                Text(isJoinable ? "Join" : "Busy")
+                    .font(.system(size: 9, weight: .bold, design: .rounded))
+            }
             .foregroundStyle(isJoinable ? color : .white.opacity(0.4))
-            .padding(.top, 3)
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
-        .padding(10)
         .background(isJoinable ? color.opacity(0.14) : .white.opacity(0.03),
                     in: RoundedRectangle(cornerRadius: 12))
         .overlay {
