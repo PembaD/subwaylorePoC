@@ -42,6 +42,11 @@ struct DiscoveredPeer: Identifiable, Equatable, Sendable {
     let domain: String
     var chatID: UUID? = nil
     var chatTitle: String? = nil
+    var gameID: UUID? = nil
+    var gameHostID: UUID? = nil
+    var gameKind: String? = nil
+    var gamePlayerCount = 0
+    var gameIsJoinable = false
 }
 
 struct ChatMessage: Codable, Identifiable, Equatable, Sendable {

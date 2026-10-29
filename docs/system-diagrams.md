@@ -1,6 +1,6 @@
 # Subway Lore system diagrams
 
-These diagrams describe the chat-ID-based PoC. Games remain Coming Soon. There is no central server or permanent chat host.
+These diagrams describe nearby chats and the multiplayer Time |t! game. There is no central server or permanent car host; each game creator is the authority for that match.
 
 ## 1. Project components
 
@@ -12,15 +12,22 @@ flowchart TB
         History["ChatHistoryView"]
         ChatUI["NearbySessionView<br/>participants, history, composer"]
         Profile["ProfileView"]
+        GamePicker["GamePickerView"]
+        GameScreen["TimeItGameView"]
     end
-    VM["NearbySessionViewModel<br/>main-actor published snapshots"]
+    VM["AppViewModel<br/>main-actor published snapshots"]
     Discovery["PeerDiscovery actor<br/>Bonjour devices + chat hints"]
     Reducer["DiscoveryReducer<br/>discovery state only"]
     Session["ChatSession actor<br/>create, join, resume, history sync"]
+    Leases["ActivityLease<br/>scoped sends, advertising and close"]
+    Coordinator["ActivityCoordinator actor<br/>single owner, serialized activity transitions"]
+    Adapter["NetworkActivityTransport<br/>Bonjour endpoint adapter"]
+    Game["GameSession actor<br/>admission, round authority, results"]
+    Rules["TimeItMatch / TimeItRules<br/>eight players, scoring, roster lock"]
     Store["ChatStore actor<br/>versioned atomic JSON in Application Support"]
     Transport["PeerTransport actor<br/>admission reservations, connections, retries, liveness"]
     Connection["PeerConnection actor<br/>TLS application handshake + framed protocol"]
-    Protocol["PeerEnvelope v2 / PeerMessage<br/>chat-scoped messages"]
+    Protocol["PeerEnvelope v3 / PeerMessage<br/>chat-scoped messages"]
     Trust["TransportConfiguration<br/>shared pinned POC TLS identity"]
     Identity["PeerIdentityStore<br/>UUID and optional name in UserDefaults"]
     Logs["DiagnosticsRecorder<br/>in-memory + unified Logger"]
@@ -30,13 +37,22 @@ flowchart TB
     History --> VM
     ChatUI --> VM
     Profile --> VM
+    GamePicker --> VM
+    GameScreen --> VM
+    VM --> Game
+    Game --> Rules
+    Game --> Leases
     Identity --> VM
     VM --> Discovery
     Discovery --> Reducer
     VM --> Session
     Session --> Store
-    Session --> Discovery
-    Session --> Transport
+    Session --> Leases
+    Leases --> Coordinator
+    VM --> Coordinator
+    Coordinator --> Adapter
+    Coordinator --> Discovery
+    Adapter --> Transport
     Discovery -->|incoming socket| Transport
     Transport --> Connection
     Connection --> Protocol
@@ -98,11 +114,11 @@ sequenceDiagram
     C->>A: establish pinned mutually authenticated TLS
     C->>A: hello and helloAccepted
     A->>C: hello and helloAccepted
-    C->>A: joinChatRequest for X
-    A->>C: joinChatRequest for X
+    C->>A: joinActivityRequest for X
+    A->>C: joinActivityRequest for X
     Note over C,A: Each side checks chat ID and reserves connection capacity
-    A->>C: joinChatAccepted with canonical chat metadata
-    C->>A: joinChatAccepted
+    A->>C: joinActivityAccepted with canonical chat metadata
+    C->>A: joinActivityAccepted
     C->>C: persist membership; advertise X
     C->>B: same admission process for X
     Note over A,C: Keep one accepted connection per UUID; prefer deterministic direction if duplicates race
@@ -163,17 +179,61 @@ Inventory pages request only missing records. Transfers run separately from the 
 | History button | Saved joined chats with previews and locally observed live/inactive status |
 | Saved chat preview | Read-only history until Join / Resume is selected |
 | New Chat | Open immediately with a new UUID; initially creator’s first name or “New chat,” then a first-message excerpt |
-| Live Games / New Game | Inactive Coming Soon placeholders |
+| Live Games | Up to three waiting/playing games, with count and availability |
+| New Game | Themed game-picker sheet; Time &#124;t! creates an eight-player lobby |
+| Game screen | Creator Start, local countdown/hidden timer, Stop, results and next round |
 | Chat back navigation | Close connections and remove own chat advertisement; preserve history |
 
 Chat messages have a chat ID, stable message ID, sender UUID/name, text, and original timestamp. Chats have an immutable ID, initial fallback title, creation time, and creator attribution. The displayed title is derived from the first message (timestamp, then message ID), normalized to one line and limited to 40 characters and 240 UTF-8 bytes for Bonjour. Later messages update the separate history preview, not the title. Synchronizing an earlier message can reconcile the first-message title across devices. Membership records track which chats this installation joined. Stored data is a versioned JSON document written atomically under Application Support.
 
+## 5. Time |t! multiplayer game
+
+Games use a star, independently of chat's mesh. Eight total players means the creator has at most seven guest connections; each guest connects only to the creator.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant H as Creator
+    participant A as Guest A
+    participant B as Guest B
+    A->>H: TLS and activity admission
+    B->>H: TLS and activity admission
+    H-->>A: admitted roster
+    H-->>B: admitted roster
+    H->>H: creator presses Start
+    H->>A: prepare frozen roster and target in 3...10
+    H->>B: same preparation
+    A-->>H: automatic preparation acknowledgement
+    B-->>H: automatic preparation acknowledgement
+    H->>A: start round
+    H->>B: start round
+    Note over H,B: Each device counts down 3-2-1 and measures local elapsed time
+    A->>H: one timing attempt
+    B->>H: one timing attempt
+    H->>H: combine with creator attempt, rank absolute errors
+    H-->>A: complete leaderboard and winner IDs
+    H-->>B: same result
+    A->>H: result acknowledgement
+    B->>H: result acknowledgement
+```
+
+Only the creator advertises a game lobby. Admission reserves a seat before accepting it, and Start is disabled until at least two players are connected and pending reservations are resolved. Joins are closed during a round. The creator may start another round from the results screen; guests may join between rounds.
+
+Every player measures their own interval with a monotonic clock, so packet latency is not added to the attempt. One accepted attempt per player is immutable. Equal smallest millisecond errors produce joint winners. Players time out after 20 seconds; the creator allows two seconds of transport grace before forfeiting missing records. A guest departure preserves an already accepted attempt or creates a forfeit, while other players continue. Creator departure/backgrounding ends the game.
+
+Preparation has a 10-second acknowledgement deadline. Results retry at two-second intervals up to five times. Guests have a bounded result-wait deadline. Stale round/session IDs cannot change a new game, and game packets are isolated from chat history.
+
 ## Validation and limitations
+
+- ActivityCoordinator owns the shared transport. Chat/game sessions hold scoped leases; cleanup or a callback from an old activity cannot close or write to a replacement activity.
+- Chat membership is derived from session state. Creator game snapshots are projected from TimeItMatch, including round, phase, attempts, outcome and participants; round-start status is derived from phase.
+- ChatSession and GameSession run in the core test package using a fake ActivityTransport and ManualSessionClock. Lifecycle tests cover concurrent opens, stale callbacks/leases, real game round completion, timeouts, send failures, and history-task cancellation.
+- Session deadlines/transfers are cancelled on leave. The production adapter supplies Bonjour endpoints; tests require neither Network.framework connections nor Simulator.
 
 - Run Foundation-based unit tests without launching the app: `make test-core`.
 - Build the iOS app and tests with the project's usual `xcodebuild build-for-testing` command.
-- Three physical devices are needed to validate discovery, TLS, termination/relaunch, full-mesh recovery, and missed-message synchronization end to end.
-- All devices must run protocol v2; unscoped v1 clients are incompatible.
+- Physical devices are needed to validate discovery, TLS, chat recovery, game timing interactions, simultaneous joins, and backgrounding end to end.
+- All devices must run protocol v3 for activity-scoped admission and games; older clients are incompatible.
 - Synchronization can recover only history retained by reachable participants.
 - The eight-peer bound is local, not a globally coordinated room-size guarantee. There is no relay beyond direct peers.
 - Messages have no delivery receipts yet. Device clocks can differ; ordering uses timestamp and message ID.

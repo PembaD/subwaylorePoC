@@ -13,7 +13,6 @@ struct ProtocolEncodingTests {
             .helloAccepted(HelloAcceptedMessage(peerID: senderID)),
             .ping(PingMessage(correlationID: correlationID)),
             .pong(PongMessage(correlationID: correlationID, originalSentAt: now, receivedAt: now.addingTimeInterval(0.02))),
-            .text(try TextMessage(text: "Hello, train car")),
             .goodbye(GoodbyeMessage(reason: "POC finished"))
         ]
 
@@ -37,9 +36,9 @@ struct ProtocolEncodingTests {
         let original = ChatMessage(id: UUID(), senderID: UUID(), senderName: "Alex", text: "Hello",
                                    sentAt: Date(), chatID: chat.id)
         let messages: [PeerMessage] = [
-            .joinChatRequest(JoinChatRequest(chatID: chat.id, requestID: requestID)),
-            .joinChatAccepted(JoinChatAccepted(requestID: requestID, chat: chat)),
-            .joinChatRejected(JoinChatRejected(requestID: requestID, reason: "Capacity reached")),
+            .joinActivityRequest(ActivityJoinRequest(activity: .chat(chat), requestID: requestID)),
+            .joinActivityAccepted(ActivityJoinAccepted(activity: .chat(chat), requestID: requestID)),
+            .joinActivityRejected(ActivityJoinRejected(requestID: requestID, reason: "Capacity reached")),
             .chatText(original),
             .historySyncRequest(chat.id),
             .historyInventory(HistoryInventory(chatID: chat.id, requestID: requestID, messageIDs: [original.id])),

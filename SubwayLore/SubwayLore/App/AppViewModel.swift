@@ -1,16 +1,23 @@
 import Foundation
 
 @MainActor
-final class NearbySessionViewModel: ObservableObject {
+final class AppViewModel: ObservableObject {
     @Published private(set) var snapshot = DiscoverySnapshot()
     @Published private(set) var chatSnapshot = ChatSnapshot()
     @Published private(set) var identity: PeerIdentity
     @Published var presentedChat: Chat?
+    @Published private(set) var gameSnapshot = GameSnapshot()
+    @Published var presentedGame: GameLobby?
     private let identityStore: PeerIdentityStore
     private let discovery: PeerDiscovery
+    private let coordinator: ActivityCoordinator
     private let session: ChatSession
+    private let gameSession: GameSession
     private var monitorTask: Task<Void, Never>?
     private var chatTask: Task<Void, Never>?
+    private var gameTask: Task<Void, Never>?
+
+    var liveGames: [DiscoveredGame] { DiscoveredGame.aggregate(snapshot.peers) }
 
     var liveChats: [DiscoveredChat] {
         var chats = DiscoveredChat.aggregate(snapshot.peers)
@@ -30,11 +37,22 @@ final class NearbySessionViewModel: ObservableObject {
         let discovery = PeerDiscovery(identity: identity, diagnostics: diagnostics,
                                       incomingHandler: { connection in await transport.accept(connection) })
         self.discovery = discovery
-        self.session = ChatSession(identity: identity, store: store, transport: transport, discovery: discovery)
+        let coordinator = ActivityCoordinator(
+            transport: NetworkActivityTransport(transport: transport, discovery: discovery), advertising: discovery)
+        self.coordinator = coordinator
+        self.session = ChatSession(identity: identity, store: store, coordinator: coordinator)
+        self.gameSession = GameSession(identity: identity, coordinator: coordinator)
     }
 
     func start() {
         guard monitorTask == nil else { return }
+        gameTask = Task { [weak self] in
+            guard let self else { return }
+            for await value in await gameSession.snapshots() {
+                guard !Task.isCancelled else { return }
+                gameSnapshot = value
+            }
+        }
         chatTask = Task { [weak self] in
             guard let self else { return }
             let snapshots = await session.snapshots()
@@ -52,6 +70,7 @@ final class NearbySessionViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 snapshot = value
                 await session.updatePeers(value.peers)
+                await gameSession.updatePeers(value.peers)
             }
         }
     }
@@ -59,10 +78,12 @@ final class NearbySessionViewModel: ObservableObject {
     func stop() {
         monitorTask?.cancel()
         chatTask?.cancel()
+        gameTask?.cancel()
         monitorTask = nil
         chatTask = nil
+        gameTask = nil
         Task {
-            await session.leave()
+            await coordinator.deactivate()
             await discovery.stop()
         }
     }
@@ -87,7 +108,26 @@ final class NearbySessionViewModel: ObservableObject {
         presentedChat = chat
     }
 
-    func resumeChat(_ chat: Chat) async throws { try await session.resume(chat) }
+    func resumeChat(_ chat: Chat) async throws {
+        try await session.resume(chat)
+    }
+
+    func createGame() async throws {
+        presentedGame = try await gameSession.create()
+    }
+
+    func joinGame(_ game: DiscoveredGame) async throws {
+        presentedGame = try await gameSession.join(game)
+    }
+
+    func startGameRound() async throws { try await gameSession.startRound() }
+    func markGameRunning(_ roundID: UUID) async { await gameSession.markRunning(roundID: roundID) }
+    func submitGameAttempt(_ roundID: UUID, milliseconds: Int?) async throws {
+        try await gameSession.submit(roundID: roundID, elapsedMilliseconds: milliseconds)
+    }
+    func leaveGame(_ gameID: UUID) {
+        Task { await gameSession.leave(gameID: gameID) }
+    }
 
     func leaveChat(_ chatID: UUID) {
         Task { await session.leave(chatID: chatID) }
@@ -101,7 +141,9 @@ final class NearbySessionViewModel: ObservableObject {
         let updated = identity.updatingProfile(firstName: firstName, lastName: lastName)
         try identityStore.save(updated)
         identity = updated
+        await coordinator.deactivate()
         await session.updateIdentity(updated)
+        await gameSession.updateIdentity(updated)
         await discovery.updateIdentity(updated)
     }
 }

@@ -58,22 +58,38 @@ enum PeerMessage: Codable, Equatable, Sendable {
     case helloAccepted(HelloAcceptedMessage)
     case ping(PingMessage)
     case pong(PongMessage)
-    case text(TextMessage)
     case goodbye(GoodbyeMessage)
-    case joinChatRequest(JoinChatRequest)
-    case joinChatAccepted(JoinChatAccepted)
-    case joinChatRejected(JoinChatRejected)
     case chatText(ChatMessage)
     case historyInventory(HistoryInventory)
     case historyRequest(HistoryRequest)
     case historyBatch(HistoryBatch)
     case historyComplete(HistoryComplete)
     case historySyncRequest(UUID)
+    case joinActivityRequest(ActivityJoinRequest)
+    case joinActivityAccepted(ActivityJoinAccepted)
+    case joinActivityRejected(ActivityJoinRejected)
+    case game(GamePacket)
+
+    var scopeID: UUID? {
+        switch self {
+        case .joinActivityRequest(let value): value.activity.id
+        case .joinActivityAccepted(let value): value.activity.id
+        case .game(let packet): packet.gameID
+        default: chatID
+        }
+    }
+
+    var scopeKind: String? {
+        switch self {
+        case .game: "game"
+        case .joinActivityRequest(let value): value.activity.kind
+        case .joinActivityAccepted(let value): value.activity.kind
+        default: chatID == nil ? nil : "chat"
+        }
+    }
 
     var chatID: UUID? {
         switch self {
-        case .joinChatRequest(let value): value.chatID
-        case .joinChatAccepted(let value): value.chat.id
         case .chatText(let value): value.chatID
         case .historyInventory(let value): value.chatID
         case .historyRequest(let value): value.chatID
@@ -85,17 +101,7 @@ enum PeerMessage: Codable, Equatable, Sendable {
     }
 }
 
-struct JoinChatRequest: Codable, Equatable, Sendable {
-    let chatID: UUID
-    let requestID: UUID
-}
-
-struct JoinChatAccepted: Codable, Equatable, Sendable {
-    let requestID: UUID
-    let chat: Chat
-}
-
-struct JoinChatRejected: Codable, Equatable, Sendable {
+struct ActivityJoinRejected: Codable, Equatable, Sendable {
     let requestID: UUID
     let reason: String
 }
