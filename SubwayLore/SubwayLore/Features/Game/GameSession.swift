@@ -1,7 +1,9 @@
 import Foundation
 
 actor GameSession {
+    private static let resultSaveError = "This round’s leaderboard could not be saved on this device."
     private let coordinator: ActivityCoordinator
+    private let resultsStore: GameResultsStore
     private let clock: any SessionClock
     private var lease: ActivityLease?
     private var identity: PeerIdentity
@@ -18,10 +20,11 @@ actor GameSession {
     private var hostConnected = false
 
     init(identity: PeerIdentity, coordinator: ActivityCoordinator,
-         clock: any SessionClock = ContinuousSessionClock()) {
+         clock: any SessionClock = ContinuousSessionClock(), resultsStore: GameResultsStore = GameResultsStore()) {
         self.identity = identity
         self.coordinator = coordinator
         self.clock = clock
+        self.resultsStore = resultsStore
     }
 
     func currentSnapshot() -> GameSnapshot { snapshot }
@@ -114,7 +117,7 @@ actor GameSession {
     func startRound() async throws {
         guard isHost, snapshot.canStart else { throw TimeItError.notReady }
         guard var hostMatch = match else { throw TimeItError.notReady }
-        let round = try hostMatch.prepare(target: Int.random(in: 3...10))
+        let round = try hostMatch.prepare(target: Int.random(in: TimeItRules.targetRange))
         match = hostMatch
         resultTask?.cancel()
         pendingResultAcks = []
@@ -286,6 +289,7 @@ actor GameSession {
                   completed.isSubset(of: Set(round.players.map(\.id))) else { return }
             snapshot.completedPlayerIDs.formUnion(completed)
         case .result(let result):
+            let expected = generation
             guard snapshot.round == result.round else { return }
             let verified = try TimeItRules.outcome(round: result.round, attempts: result.attempts, hostID: sender)
             guard verified == result else { throw TimeItError.invalidAttempt }
@@ -296,6 +300,8 @@ actor GameSession {
             snapshot.completedPlayerIDs = Set(result.round.players.map(\.id))
             finishedRounds.insert(result.round.id)
             deadline?.cancel()
+            let saved = await saveResult(result)
+            guard expected == generation, snapshot.round == result.round, saved else { return }
             try await send(.resultAck(result.round.id), to: sender)
         case .roundAborted(let id):
             guard snapshot.round?.id == id else { return }
@@ -328,6 +334,8 @@ actor GameSession {
         deadline?.cancel()
         finishedRounds.insert(outcome.round.id)
         pendingResultAcks = Set(snapshot.players.filter { $0.id != identity.id && $0.isConnected }.map(\.id))
+        _ = await saveResult(outcome)
+        guard expected == generation, match?.outcome == outcome else { return }
         publish()
         await advertise()
         await broadcast(.result(outcome), generation: expected)
@@ -344,6 +352,9 @@ actor GameSession {
 
     private func retryResult(_ outcome: RoundOutcome, generation expected: UUID) async {
         guard generation == expected, snapshot.outcome == outcome else { return }
+        _ = await saveResult(outcome)
+        guard generation == expected, snapshot.outcome == outcome else { return }
+        publish()
         for id in pendingResultAcks {
             guard expected == generation else { return }
             do { try await send(.result(outcome), to: id) }
@@ -352,6 +363,20 @@ actor GameSession {
                 snapshot.error = "Retrying result delivery to a player."
                 publish()
             }
+        }
+    }
+
+    private func saveResult(_ outcome: RoundOutcome) async -> Bool {
+        let expected = generation
+        do {
+            try await resultsStore.record(outcome.completedRound())
+            if expected == generation, snapshot.error == Self.resultSaveError { snapshot.error = nil }
+            return true
+        } catch {
+            guard expected == generation else { return false }
+            snapshot.error = Self.resultSaveError
+            publish()
+            return false
         }
     }
 

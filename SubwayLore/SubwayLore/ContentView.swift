@@ -17,6 +17,7 @@ struct ContentView: View {
     @State private var actionError: String?
     @State private var isJoining = false
     @State private var showsGamePicker = false
+    @State private var showsLeaderboard = false
     @State private var isJoiningGame = false
 
     var body: some View {
@@ -57,6 +58,9 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showsHistory) {
             ChatHistoryView(model: appModel)
+        }
+        .sheet(isPresented: $showsLeaderboard) {
+            LeaderboardView(model: appModel)
         }
         .sheet(isPresented: $showsGamePicker) {
             GamePickerView(model: appModel)
@@ -160,7 +164,7 @@ struct ContentView: View {
                         Text("No live chats nearby")
                             .font(.system(size: 12, weight: .medium, design: .rounded))
                             .foregroundStyle(.white.opacity(0.45))
-                            .frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
+                            .frame(maxWidth: .infinity, alignment: .topLeading)
                     } else {
                         ForEach(appModel.liveChats.prefix(3)) { chat in
                             Button {
@@ -172,26 +176,30 @@ struct ContentView: View {
                                     catch { actionError = "Chat could not be opened. Please try again." }
                                 }
                             } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(chat.title).foregroundStyle(.white).lineLimit(1)
-                                    Text("\(chat.advertisingPeerIDs.count) nearby")
-                                        .foregroundStyle(.white.opacity(0.45))
-                                }
-                                .font(.system(size: 12, weight: .semibold, design: .rounded))
-                                .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
+                                LiveActivityRow(title: chat.title,
+                                    detail: "\(chat.advertisingPeerIDs.count) nearby", color: .loreBlue)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(LiveActivityButtonStyle())
                             .disabled(isJoining)
+                            .accessibilityLabel("Join chat: \(chat.title)")
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: 155, alignment: .topLeading)
+                .frame(maxWidth: .infinity, minHeight: 65, alignment: .topLeading)
                 .loreCard(padding: 14)
 
                 VStack(alignment: .leading, spacing: 12) {
-                    Label("Live Games", systemImage: "bolt.fill")
-                        .font(.system(size: 13, weight: .bold, design: .rounded))
-                        .foregroundStyle(Color.loreOrange)
+                    HStack {
+                        Label("Live Games", systemImage: "bolt.fill")
+                        Spacer(minLength: 0)
+                        Button { showsLeaderboard = true } label: {
+                            Image(systemName: "trophy.fill")
+                        }
+                        .accessibilityLabel("Game leaderboards")
+                        .accessibilityIdentifier("gameLeaderboards")
+                    }
+                    .font(.system(size: 13, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color.loreOrange)
                     if appModel.liveGames.isEmpty {
                         Text("No live games nearby")
                             .font(.system(size: 12, weight: .medium, design: .rounded))
@@ -207,21 +215,17 @@ struct ContentView: View {
                                     catch { actionError = "This game is full or already playing. Try between rounds." }
                                 }
                             } label: {
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(game.lobby.kind.title).foregroundStyle(.white)
-                                    Text("\(game.playerCount)/8 · \(game.isJoinable ? "Join" : "Playing / Full")")
-                                        .foregroundStyle(.white.opacity(0.45))
-                                    Text(game.lobby.hostDisplayName).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
-                                }
-                                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                                LiveActivityRow(title: game.lobby.kind.title,
+                                    detail: "\(game.playerCount)/8 · \(game.lobby.hostDisplayName)",
+                                    color: .loreOrange, isJoinable: game.isJoinable && game.playerCount < 8)
                             }
-                            .buttonStyle(.plain)
-                            .disabled(isJoiningGame || !game.isJoinable)
+                            .buttonStyle(LiveActivityButtonStyle())
+                            .disabled(isJoiningGame || !game.isJoinable || game.playerCount >= 8)
+                            .accessibilityLabel("\(game.isJoinable && game.playerCount < 8 ? "Join" : "Unavailable") game: \(game.lobby.kind.title), \(game.lobby.hostDisplayName)")
                         }
                     }
                 }
-                .frame(maxWidth: .infinity, minHeight: 155, alignment: .topLeading)
+                .frame(maxWidth: .infinity, minHeight: 65, alignment: .topLeading)
                 .loreCard(padding: 14)
             }
 
@@ -251,6 +255,52 @@ struct ContentView: View {
                 Text(error).font(.caption).foregroundStyle(Color.loreOrange)
             }
         }
+    }
+}
+
+private struct LiveActivityRow: View {
+    let title: String
+    let detail: String
+    let color: Color
+    var isJoinable = true
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 13, weight: .bold, design: .rounded))
+                .foregroundStyle(.white.opacity(isJoinable ? 1 : 0.6))
+                .lineLimit(2)
+            Text(detail)
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.white.opacity(0.55))
+                .lineLimit(1)
+            HStack {
+                Text(isJoinable ? "Join" : "Playing / Full")
+                Spacer(minLength: 0)
+                if isJoinable { Image(systemName: "arrow.right") }
+            }
+            .font(.system(size: 11, weight: .bold, design: .rounded))
+            .foregroundStyle(isJoinable ? color : .white.opacity(0.4))
+            .padding(.top, 3)
+        }
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+        .padding(10)
+        .background(isJoinable ? color.opacity(0.14) : .white.opacity(0.03),
+                    in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(isJoinable ? color.opacity(0.4) : .white.opacity(0.08), lineWidth: 1)
+        }
+        .contentShape(RoundedRectangle(cornerRadius: 12))
+    }
+}
+
+private struct LiveActivityButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .brightness(configuration.isPressed ? 0.08 : 0)
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.12), value: configuration.isPressed)
     }
 }
 

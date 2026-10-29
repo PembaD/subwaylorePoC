@@ -1,8 +1,10 @@
 import Foundation
 
-enum GameKind: String, Codable, Sendable {
+enum GameKind: String, Codable, CaseIterable, Sendable {
     case timeIt
-    var title: String { "Time |t!" }
+    var title: String {
+        switch self { case .timeIt: "Time |t!" }
+    }
 }
 
 struct GameLobby: Codable, Hashable, Identifiable, Sendable {

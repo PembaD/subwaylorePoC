@@ -46,12 +46,12 @@ struct TimeItRulesTests {
         #expect(match.phase == .preparing)
     }
 
-    @Test(arguments: [3, 10]) func targetBoundariesAreAccepted(_ target: Int) throws {
+    @Test(arguments: [1, 6]) func targetBoundariesAreAccepted(_ target: Int) throws {
         var match = try match()
         #expect(try match.prepare(target: target).targetSeconds == target)
     }
 
-    @Test(arguments: [2, 11]) func invalidTargetsAreRejected(_ target: Int) throws {
+    @Test(arguments: [0, 7]) func invalidTargetsAreRejected(_ target: Int) throws {
         var match = try match()
         #expect(throws: TimeItError.invalidRound) { try match.prepare(target: target) }
         #expect(match.phase == .lobby)

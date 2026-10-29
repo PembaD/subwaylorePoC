@@ -8,6 +8,9 @@ final class AppViewModel: ObservableObject {
     @Published var presentedChat: Chat?
     @Published private(set) var gameSnapshot = GameSnapshot()
     @Published var presentedGame: GameLobby?
+    @Published private(set) var completedRounds: [CompletedRound] = []
+    @Published private(set) var leaderboardError: String?
+    private let resultsStore: GameResultsStore
     private let identityStore: PeerIdentityStore
     private let discovery: PeerDiscovery
     private let coordinator: ActivityCoordinator
@@ -29,10 +32,12 @@ final class AppViewModel: ObservableObject {
     }
 
     init(identityStore: PeerIdentityStore = PeerIdentityStore(),
-         diagnostics: DiagnosticsRecorder = DiagnosticsRecorder(), store: ChatStore = ChatStore()) {
+         diagnostics: DiagnosticsRecorder = DiagnosticsRecorder(), store: ChatStore = ChatStore(),
+         resultsStore: GameResultsStore = .persistent()) {
         let identity = identityStore.loadOrCreate()
         self.identityStore = identityStore
         self.identity = identity
+        self.resultsStore = resultsStore
         let transport = PeerTransport(diagnostics: diagnostics)
         let discovery = PeerDiscovery(identity: identity, diagnostics: diagnostics,
                                       incomingHandler: { connection in await transport.accept(connection) })
@@ -41,16 +46,18 @@ final class AppViewModel: ObservableObject {
             transport: NetworkActivityTransport(transport: transport, discovery: discovery), advertising: discovery)
         self.coordinator = coordinator
         self.session = ChatSession(identity: identity, store: store, coordinator: coordinator)
-        self.gameSession = GameSession(identity: identity, coordinator: coordinator)
+        self.gameSession = GameSession(identity: identity, coordinator: coordinator, resultsStore: resultsStore)
     }
 
     func start() {
         guard monitorTask == nil else { return }
         gameTask = Task { [weak self] in
             guard let self else { return }
+            await refreshLeaderboard()
             for await value in await gameSession.snapshots() {
                 guard !Task.isCancelled else { return }
                 gameSnapshot = value
+                if value.outcome != nil { await refreshLeaderboard() }
             }
         }
         chatTask = Task { [weak self] in
@@ -72,6 +79,15 @@ final class AppViewModel: ObservableObject {
                 await session.updatePeers(value.peers)
                 await gameSession.updatePeers(value.peers)
             }
+        }
+    }
+
+    func refreshLeaderboard() async {
+        do {
+            completedRounds = try await resultsStore.rounds()
+            leaderboardError = nil
+        } catch {
+            leaderboardError = "Saved results could not be loaded. Please try again."
         }
     }
 
