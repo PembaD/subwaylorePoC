@@ -89,14 +89,6 @@ struct ContentView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack {
-                Label("OFFLINE READY", systemImage: "dot.radiowaves.left.and.right")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .tracking(0.7)
-                    .foregroundStyle(Color.loreGreen)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.loreGreen.opacity(0.12), in: Capsule())
-
                 Spacer()
 
                 Button {
