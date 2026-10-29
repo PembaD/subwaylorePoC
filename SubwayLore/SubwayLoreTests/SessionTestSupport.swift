@@ -70,6 +70,9 @@ actor ManualSessionClock: SessionClock {
     private var now: Duration = .zero
     private var waiters: [UUID: Waiter] = [:]
     var pendingCount: Int { waiters.count }
+    func pendingCount(for duration: Duration) -> Int {
+        waiters.values.filter { $0.deadline - now == duration }.count
+    }
 
     func sleep(for duration: Duration) async throws {
         try Task.checkCancellation()

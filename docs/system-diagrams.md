@@ -1,6 +1,6 @@
 # Subway Lore system diagrams
 
-These diagrams describe nearby chats and the multiplayer Time |t! game. There is no central server or permanent car host; each game creator is the authority for that match.
+These diagrams describe nearby chats and the multiplayer Time |t! and Subway Trivia games. There is no central server or permanent car host; each game creator is the authority for that match.
 
 ## 1. Project components
 
@@ -14,6 +14,7 @@ flowchart TB
         Profile["ProfileView"]
         GamePicker["GamePickerView"]
         GameScreen["TimeItGameView"]
+        TriviaScreen["TriviaGameView"]
     end
     VM["AppViewModel<br/>main-actor published snapshots"]
     Discovery["PeerDiscovery actor<br/>Bonjour devices + chat hints"]
@@ -24,6 +25,10 @@ flowchart TB
     Adapter["NetworkActivityTransport<br/>Bonjour endpoint adapter"]
     Game["GameSession actor<br/>admission, round authority, results"]
     Rules["TimeItMatch / TimeItRules<br/>eight players, scoring, roster lock"]
+    Trivia["TriviaSession actor<br/>admission, questions, reveals, verified results"]
+    TriviaRules["TriviaMatch / TriviaRules<br/>100-question bank, 5 questions, A-D choices"]
+    QuestionHistory["TriviaQuestionHistoryStore<br/>per-player unseen-question rotation"]
+    Results["GameResultsStore<br/>per-game wins and head-to-head"]
     Store["ChatStore actor<br/>versioned atomic JSON in Application Support"]
     Transport["PeerTransport actor<br/>admission reservations, connections, retries, liveness"]
     Connection["PeerConnection actor<br/>TLS application handshake + framed protocol"]
@@ -39,9 +44,16 @@ flowchart TB
     Profile --> VM
     GamePicker --> VM
     GameScreen --> VM
+    TriviaScreen --> VM
     VM --> Game
     Game --> Rules
     Game --> Leases
+    VM --> Trivia
+    Trivia --> TriviaRules
+    Trivia --> QuestionHistory
+    Trivia --> Leases
+    Trivia --> Results
+    Game --> Results
     Identity --> VM
     VM --> Discovery
     Discovery --> Reducer
@@ -181,7 +193,8 @@ Inventory pages request only missing records. Transfers run separately from the 
 | New Chat | Open immediately with a new UUID; initially creator’s first name or “New chat,” then a first-message excerpt |
 | Live Games | Up to three waiting/playing games, with count, availability, and chevrons on joinable rows; compact empty state |
 | Live Games trophy button | Locally saved per-game leaderboards and your head-to-head records |
-| New Game | Themed game-picker sheet; Time &#124;t! creates an eight-player lobby |
+| New Game | Scrollable picker for Time &#124;t! and Subway Trivia; either creates an eight-player lobby |
+| Subway Trivia screen | Creator Start, five A–D questions, visible 15-second timer, answer reveals, final scores and saved standings |
 | Game screen | Creator Start, countdown, visible elapsed timer, Stop, results, match standings/head-to-head, next round |
 | Chat back navigation | Close connections and remove own chat advertisement; preserve history |
 
@@ -229,7 +242,7 @@ Preparation has a 10-second acknowledgement deadline. Results retry at two-secon
 ```mermaid
 flowchart LR
     Outcome[Verified Time It outcome] --> Adapter[Game-specific placement adapter]
-    Future[Future game outcome] --> Other[That game's placement adapter]
+    Future[Subway Trivia outcome] --> Other[Trivia placement adapter: total correct answers]
     Adapter --> Round[CompletedRound: kind, game ID, round ID, players, placements, measurements]
     Other --> Round
     Round --> Store[GameResultsStore: atomic versioned JSON]
