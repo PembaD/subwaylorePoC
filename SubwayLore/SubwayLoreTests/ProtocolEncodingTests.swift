@@ -31,6 +31,32 @@ struct ProtocolEncodingTests {
         }
     }
 
+    @Test func chatAdmissionAndHistoryMessagesRoundTripThroughFrames() throws {
+        let chat = Chat(id: UUID(), title: "Morning commute", createdAt: Date(), createdByPeerID: UUID())
+        let requestID = UUID()
+        let original = ChatMessage(id: UUID(), senderID: UUID(), senderName: "Alex", text: "Hello",
+                                   sentAt: Date(), chatID: chat.id)
+        let messages: [PeerMessage] = [
+            .joinChatRequest(JoinChatRequest(chatID: chat.id, requestID: requestID)),
+            .joinChatAccepted(JoinChatAccepted(requestID: requestID, chat: chat)),
+            .joinChatRejected(JoinChatRejected(requestID: requestID, reason: "Capacity reached")),
+            .chatText(original),
+            .historySyncRequest(chat.id),
+            .historyInventory(HistoryInventory(chatID: chat.id, requestID: requestID, messageIDs: [original.id])),
+            .historyRequest(HistoryRequest(chatID: chat.id, requestID: requestID, messageIDs: [original.id])),
+            .historyBatch(HistoryBatch(chatID: chat.id, requestID: requestID, messages: [original])),
+            .historyComplete(HistoryComplete(chatID: chat.id, requestID: requestID))
+        ]
+        for body in messages {
+            // The forwarding peer and the historical author's IDs intentionally differ.
+            let sent = PeerEnvelope(senderID: UUID(), sequence: 1, body: body)
+            let framed = try MessageFramer.frame(JSONEncoder().encode(sent))
+            var decoder = FrameDecoder()
+            let payload = try #require(decoder.append(framed).first)
+            #expect(try JSONDecoder().decode(PeerEnvelope.self, from: payload) == sent)
+        }
+    }
+
     @Test
     func unsupportedProtocolVersionIsRejected() {
         let envelope = PeerEnvelope(
@@ -40,7 +66,7 @@ struct ProtocolEncodingTests {
             body: .ping(PingMessage(correlationID: UUID()))
         )
 
-        #expect(throws: PeerEnvelopeError.unsupportedProtocolVersion(received: 99, supported: 1)) {
+        #expect(throws: PeerEnvelopeError.unsupportedProtocolVersion(received: 99, supported: PeerEnvelope.currentProtocolVersion)) {
             try envelope.validateProtocolVersion()
         }
     }

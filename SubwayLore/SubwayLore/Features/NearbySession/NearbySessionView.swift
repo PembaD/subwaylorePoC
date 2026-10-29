@@ -2,7 +2,10 @@ import SwiftUI
 
 struct NearbySessionView: View {
     @ObservedObject var model: NearbySessionViewModel
+    let chat: Chat
     @State private var draft = ""
+    @State private var isSending = false
+    @State private var sendError: String?
 
     var body: some View {
         ZStack {
@@ -12,26 +15,47 @@ struct NearbySessionView: View {
                 participantHeader
                 Divider().overlay(Color.white.opacity(0.07))
                 messageList
-                composer
+                if let error = sendError ?? model.chatSnapshot.error {
+                    HStack {
+                        Text(error).font(.caption).foregroundStyle(Color.loreOrange)
+                        Spacer()
+                        Button("Retry") { model.retryHistory() }.font(.caption.bold())
+                    }.padding(12)
+                }
+                if model.chatSnapshot.isSynchronizing {
+                    Text("Synchronizing history…").font(.caption).foregroundStyle(.secondary)
+                }
+                if model.chatSnapshot.isActive {
+                    composer
+                } else {
+                    Button("Join / Resume chat") {
+                        Task {
+                            do { try await model.resumeChat(chat) }
+                            catch { sendError = "Unable to resume chat." }
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.loreGreen)
+                    .padding()
+                }
             }
         }
-        .navigationTitle("Car Chat")
+        .navigationTitle(model.chatSnapshot.chat?.title ?? chat.title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
-        .onAppear { model.joinChat() }
-        .onDisappear { model.leaveChat() }
+        .onDisappear { model.leaveChat(chat.id) }
     }
 
     private var participantHeader: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
-                Text("\(model.snapshot.connectedPeerCount) connected")
+                Text(model.chatSnapshot.isActive ? "\(model.chatSnapshot.connectedPeerCount) connected" : "Saved history")
                     .font(.system(size: 13, weight: .bold, design: .rounded))
                     .foregroundStyle(.white)
 
                 Spacer()
 
-                if model.snapshot.peers.contains(where: { model.snapshot.linkState(for: $0) == .connecting }) {
+                if model.chatSnapshot.participants.contains(where: { $0.state == .connecting }) {
                     Text("Connecting…")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(.white.opacity(0.5))
@@ -40,13 +64,13 @@ struct NearbySessionView: View {
 
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 16) {
-                    participant(initials: "YOU", name: "You", state: .connected, isLocal: true)
+                    participant(initials: "YOU", name: "You", state: model.chatSnapshot.isActive ? .connected : .discovered, isLocal: true)
 
-                    ForEach(model.snapshot.peers.prefix(8)) { peer in
+                    ForEach(model.chatSnapshot.participants) { peer in
                         participant(
                             initials: initials(for: peer.displayName),
                             name: shortName(peer.displayName),
-                            state: model.snapshot.linkState(for: peer),
+                            state: peer.state,
                             isLocal: false
                         )
                     }
@@ -94,18 +118,18 @@ struct NearbySessionView: View {
         ScrollViewReader { proxy in
             ScrollView {
                 LazyVStack(spacing: 12) {
-                    if model.snapshot.chatMessages.isEmpty {
+                    if model.chatSnapshot.messages.isEmpty {
                         emptyState
                     } else {
-                        ForEach(model.snapshot.chatMessages) { message in
+                        ForEach(model.chatSnapshot.messages) { message in
                             messageBubble(message).id(message.id)
                         }
                     }
                 }
                 .padding(18)
             }
-            .onChange(of: model.snapshot.chatMessages.count) {
-                guard let id = model.snapshot.chatMessages.last?.id else { return }
+            .onChange(of: model.chatSnapshot.messages.count) {
+                guard let id = model.chatSnapshot.messages.last?.id else { return }
                 withAnimation { proxy.scrollTo(id, anchor: .bottom) }
             }
         }
@@ -117,13 +141,13 @@ struct NearbySessionView: View {
                 .font(.system(size: 28, weight: .bold))
                 .foregroundStyle(Color.loreBlue)
 
-            Text(model.snapshot.connectedPeerCount == 0 ? "Finding riders…" : "Start the conversation")
+            Text(model.chatSnapshot.connectedPeerCount == 0 ? "Finding riders…" : "Start the conversation")
                 .font(.system(size: 17, weight: .bold, design: .rounded))
                 .foregroundStyle(.white)
 
-            Text(model.snapshot.connectedPeerCount == 0
-                 ? "Open Car Chat on another nearby device."
-                 : "Messages stay with riders connected in this car.")
+            Text(model.chatSnapshot.connectedPeerCount == 0
+                 ? "Nearby riders can find this chat in Live Chats."
+                 : "Messages are saved on participating devices.")
                 .font(.system(size: 12, weight: .medium, design: .rounded))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.white.opacity(0.46))
@@ -158,6 +182,7 @@ struct NearbySessionView: View {
     private var composer: some View {
         HStack(spacing: 10) {
             TextField("Message this car", text: $draft, axis: .vertical)
+                .accessibilityIdentifier("messageComposer")
                 .lineLimit(1...4)
                 .textFieldStyle(.plain)
                 .foregroundStyle(.white)
@@ -173,8 +198,10 @@ struct NearbySessionView: View {
                     .background(Color.loreGreen, in: Circle())
             }
             .buttonStyle(.plain)
-            .disabled(trimmedDraft.isEmpty || model.snapshot.connectedPeerCount == 0)
-            .opacity(trimmedDraft.isEmpty || model.snapshot.connectedPeerCount == 0 ? 0.4 : 1)
+            .accessibilityLabel("Send message")
+            .accessibilityIdentifier("sendMessage")
+            .disabled(trimmedDraft.isEmpty || draft.count > TextMessage.maximumCharacterCount || isSending)
+            .opacity(trimmedDraft.isEmpty || draft.count > TextMessage.maximumCharacterCount || isSending ? 0.4 : 1)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
@@ -188,8 +215,17 @@ struct NearbySessionView: View {
     private func sendMessage() {
         let text = trimmedDraft
         guard !text.isEmpty else { return }
-        model.sendChatMessage(text)
-        draft = ""
+        isSending = true
+        sendError = nil
+        Task {
+            do {
+                try await model.sendChatMessage(text)
+                draft = ""
+            } catch {
+                sendError = "Message could not be sent. Check your connection or shorten the message."
+            }
+            isSending = false
+        }
     }
 
     private func initials(for name: String) -> String {

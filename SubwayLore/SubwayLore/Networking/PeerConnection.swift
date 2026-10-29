@@ -5,6 +5,7 @@ struct ConnectedPeer: Equatable, Sendable {
     let id: UUID
     let displayName: String
     let capabilities: [String]
+    let chat: Chat
 }
 
 enum PeerConnectionError: Error, Equatable, Sendable {
@@ -14,6 +15,8 @@ enum PeerConnectionError: Error, Equatable, Sendable {
     case unexpectedPeer(expected: UUID, received: UUID)
     case invalidHelloAcceptance
     case handshakeIncomplete
+    case admissionRejected(String)
+    case wrongChat
 }
 
 actor PeerConnection {
@@ -22,98 +25,121 @@ actor PeerConnection {
 
     private let connection: NetworkConnection<TLS>
     private let localIdentity: PeerIdentity
+    private let localChat: Chat
     private let expectedPeerID: UUID?
     private let diagnostics: DiagnosticsRecorder
     private let messageHandler: @Sendable (PeerEnvelope) async -> Void
+    private let admissionCheck: @Sendable (UUID) async -> String?
     private var decoder = FrameDecoder()
     private var sequence: UInt64 = 0
     private var remotePeer: ConnectedPeer?
     private var isClosed = false
+    private var pendingEnvelopes: [PeerEnvelope] = []
 
     init(
         id: UUID = UUID(),
         connection: NetworkConnection<TLS>,
         direction: ConnectionDirection,
         localIdentity: PeerIdentity,
+        chat: Chat,
         expectedPeerID: UUID?,
         diagnostics: DiagnosticsRecorder,
+        admissionCheck: @escaping @Sendable (UUID) async -> String?,
         messageHandler: @escaping @Sendable (PeerEnvelope) async -> Void
     ) {
         self.id = id
         self.connection = connection
         self.direction = direction
         self.localIdentity = localIdentity
+        self.localChat = chat
         self.expectedPeerID = expectedPeerID
         self.diagnostics = diagnostics
         self.messageHandler = messageHandler
+        self.admissionCheck = admissionCheck
     }
 
     func handshake() async throws -> ConnectedPeer {
-        record(.info, "TLS connection starting", metadata: ["direction": direction.rawValue])
-        try await send(
-            .hello(
-                HelloMessage(
-                    peerID: localIdentity.id,
-                    displayName: localIdentity.displayName,
-                    capabilities: ["phase3", "framed-json"]
-                )
-            )
-        )
-
-        var receivedPeer: ConnectedPeer?
-        var receivedAcceptance = false
-
-        while receivedPeer == nil || !receivedAcceptance {
+        let requestID = UUID()
+        try await send(.hello(HelloMessage(
+            peerID: localIdentity.id, displayName: localIdentity.displayName,
+            capabilities: ["chats-v2", "history"]
+        )))
+        var hello: HelloMessage?
+        var acceptanceSender: UUID?
+        var acceptedChat: Chat?
+        var answeredRequest = false
+        while hello == nil || acceptanceSender == nil || acceptedChat == nil || !answeredRequest {
             for envelope in try await receiveEnvelopes() {
                 try envelope.validateProtocolVersion()
-
                 switch envelope.body {
-                case .hello(let hello):
-                    guard envelope.senderID == hello.peerID else {
+                case .hello(let value):
+                    guard hello == nil, envelope.senderID == value.peerID,
+                          value.peerID != localIdentity.id else {
                         throw PeerConnectionError.invalidHelloSender
                     }
-                    if let expectedPeerID, expectedPeerID != hello.peerID {
-                        throw PeerConnectionError.unexpectedPeer(
-                            expected: expectedPeerID,
-                            received: hello.peerID
-                        )
+                    if let expectedPeerID, expectedPeerID != value.peerID {
+                        throw PeerConnectionError.unexpectedPeer(expected: expectedPeerID, received: value.peerID)
                     }
-                    receivedPeer = ConnectedPeer(
-                        id: hello.peerID,
-                        displayName: hello.displayName,
-                        capabilities: hello.capabilities
-                    )
+                    hello = value
                     try await send(.helloAccepted(HelloAcceptedMessage(peerID: localIdentity.id)))
-
-                case .helloAccepted(let accepted):
-                    guard envelope.senderID == accepted.peerID else {
+                    try await send(.joinChatRequest(JoinChatRequest(chatID: localChat.id, requestID: requestID)))
+                case .helloAccepted(let value):
+                    guard envelope.senderID == value.peerID else {
                         throw PeerConnectionError.invalidHelloAcceptance
                     }
-                    receivedAcceptance = true
-
+                    acceptanceSender = value.peerID
+                case .joinChatRequest(let request):
+                    guard let hello, hello.peerID == envelope.senderID else {
+                        throw PeerConnectionError.expectedHello
+                    }
+                    guard request.chatID == localChat.id else {
+                        try await send(.joinChatRejected(JoinChatRejected(
+                            requestID: request.requestID, reason: "Chat is no longer available"
+                        )))
+                        throw PeerConnectionError.wrongChat
+                    }
+                    if let reason = await admissionCheck(hello.peerID) {
+                        try await send(.joinChatRejected(JoinChatRejected(requestID: request.requestID, reason: reason)))
+                        throw PeerConnectionError.admissionRejected(reason)
+                    }
+                    answeredRequest = true
+                    try await send(.joinChatAccepted(JoinChatAccepted(requestID: request.requestID, chat: localChat)))
+                case .joinChatAccepted(let accepted):
+                    guard let hello, envelope.senderID == hello.peerID,
+                          accepted.requestID == requestID,
+                          accepted.chat.id == localChat.id else { throw PeerConnectionError.wrongChat }
+                    acceptedChat = accepted.chat
+                case .joinChatRejected(let rejected):
+                    guard rejected.requestID == requestID else { throw PeerConnectionError.wrongChat }
+                    throw PeerConnectionError.admissionRejected(rejected.reason)
                 default:
-                    throw PeerConnectionError.expectedHello
+                    // A fast remote may send history alongside the final handshake frames.
+                    pendingEnvelopes.append(envelope)
                 }
             }
         }
-
-        guard let receivedPeer else {
+        guard let hello, acceptanceSender == hello.peerID, let acceptedChat else {
             throw PeerConnectionError.handshakeIncomplete
         }
-        guard receivedAcceptance else {
-            throw PeerConnectionError.handshakeIncomplete
-        }
-
-        remotePeer = receivedPeer
-        record(.info, "Application handshake complete", remotePeerID: receivedPeer.id)
-        return receivedPeer
+        let peer = ConnectedPeer(id: hello.peerID, displayName: hello.displayName,
+                                 capabilities: hello.capabilities, chat: acceptedChat)
+        remotePeer = peer
+        record(.info, "Chat admission complete", remotePeerID: peer.id)
+        return peer
     }
 
     func receiveUntilClosed() async throws {
         guard let remotePeer else { throw PeerConnectionError.handshakeIncomplete }
 
         while !Task.isCancelled && !isClosed {
-            for envelope in try await receiveEnvelopes() {
+            let envelopes: [PeerEnvelope]
+            if pendingEnvelopes.isEmpty {
+                envelopes = try await receiveEnvelopes()
+            } else {
+                envelopes = pendingEnvelopes
+                pendingEnvelopes.removeAll()
+            }
+            for envelope in envelopes {
                 try envelope.validateProtocolVersion()
                 guard envelope.senderID == remotePeer.id else {
                     throw PeerConnectionError.invalidHelloSender
@@ -122,21 +148,27 @@ actor PeerConnection {
                 switch envelope.body {
                 case .goodbye:
                     record(.info, "Remote peer disconnected", remotePeerID: remotePeer.id)
-                    isClosed = true
                     return
                 case .hello, .helloAccepted:
                     throw PeerConnectionError.expectedHello
-                case .text:
+                case .chatText, .historyInventory, .historyRequest, .historyBatch, .historyComplete, .historySyncRequest:
                     await messageHandler(envelope)
-                case .ping, .pong:
-                    record(.debug, "Phase 4 message received", remotePeerID: remotePeer.id)
+                case .ping(let ping):
+                    try await send(.pong(PongMessage(correlationID: ping.correlationID,
+                                                    originalSentAt: envelope.sentAt, receivedAt: Date())))
+                    await messageHandler(envelope)
+                case .pong:
+                    await messageHandler(envelope)
+                default:
+                    throw PeerConnectionError.expectedHello
                 }
             }
         }
     }
 
-    func sendText(_ text: String) async throws {
-        try await send(.text(try TextMessage(text: text)))
+    func sendChatMessage(_ message: ChatMessage) async throws {
+        sequence &+= 1
+        try await sendEnvelope(message.envelope(sequence: sequence))
     }
 
     func close(reason: String? = nil, notifyPeer: Bool = true) async {
@@ -150,19 +182,24 @@ actor PeerConnection {
         record(.debug, "Connection closed", remotePeerID: remotePeer?.id)
     }
 
-    private func send(_ message: PeerMessage) async throws {
+    func send(_ message: PeerMessage) async throws {
         sequence &+= 1
         let envelope = PeerEnvelope(
             senderID: localIdentity.id,
             sequence: sequence,
             body: message
         )
+        try await sendEnvelope(envelope)
+    }
+
+    private func sendEnvelope(_ envelope: PeerEnvelope) async throws {
         let payload = try JSONEncoder().encode(envelope)
         let framed = try MessageFramer.frame(payload)
         try await connection.send(framed)
         record(.debug, "Protocol message sent", remotePeerID: remotePeer?.id, metadata: [
             "bytes": String(framed.count),
-            "sequence": String(sequence),
+            "sequence": String(envelope.sequence),
+            "messageID": envelope.id.uuidString,
         ])
     }
 

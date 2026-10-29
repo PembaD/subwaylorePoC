@@ -60,6 +60,67 @@ enum PeerMessage: Codable, Equatable, Sendable {
     case pong(PongMessage)
     case text(TextMessage)
     case goodbye(GoodbyeMessage)
+    case joinChatRequest(JoinChatRequest)
+    case joinChatAccepted(JoinChatAccepted)
+    case joinChatRejected(JoinChatRejected)
+    case chatText(ChatMessage)
+    case historyInventory(HistoryInventory)
+    case historyRequest(HistoryRequest)
+    case historyBatch(HistoryBatch)
+    case historyComplete(HistoryComplete)
+    case historySyncRequest(UUID)
+
+    var chatID: UUID? {
+        switch self {
+        case .joinChatRequest(let value): value.chatID
+        case .joinChatAccepted(let value): value.chat.id
+        case .chatText(let value): value.chatID
+        case .historyInventory(let value): value.chatID
+        case .historyRequest(let value): value.chatID
+        case .historyBatch(let value): value.chatID
+        case .historyComplete(let value): value.chatID
+        case .historySyncRequest(let id): id
+        default: nil
+        }
+    }
+}
+
+struct JoinChatRequest: Codable, Equatable, Sendable {
+    let chatID: UUID
+    let requestID: UUID
+}
+
+struct JoinChatAccepted: Codable, Equatable, Sendable {
+    let requestID: UUID
+    let chat: Chat
+}
+
+struct JoinChatRejected: Codable, Equatable, Sendable {
+    let requestID: UUID
+    let reason: String
+}
+
+struct HistoryInventory: Codable, Equatable, Sendable {
+    let chatID: UUID
+    let requestID: UUID
+    let messageIDs: [UUID]
+}
+
+struct HistoryRequest: Codable, Equatable, Sendable {
+    let chatID: UUID
+    let requestID: UUID
+    let messageIDs: [UUID]
+}
+
+struct HistoryBatch: Codable, Equatable, Sendable {
+    let chatID: UUID
+    let requestID: UUID
+    let messages: [ChatMessage]
+}
+
+struct HistoryComplete: Codable, Equatable, Sendable {
+    let chatID: UUID
+    let requestID: UUID
 }
 
 enum PeerMessageValidationError: Error, Equatable, Sendable {

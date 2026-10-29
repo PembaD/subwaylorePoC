@@ -84,7 +84,7 @@ struct NearbyNetworkCard: View {
             }
             .animation(.spring(response: 0.45, dampingFraction: 0.78), value: visiblePeers)
         }
-        .frame(height: 210)
+        .frame(height: 180)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(networkAccessibilityLabel)
     }

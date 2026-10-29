@@ -40,14 +40,28 @@ struct DiscoveredPeer: Identifiable, Equatable, Sendable {
     let peerID: UUID?
     let displayName: String
     let domain: String
+    var chatID: UUID? = nil
+    var chatTitle: String? = nil
 }
 
-struct ChatMessage: Identifiable, Equatable, Sendable {
+struct ChatMessage: Codable, Identifiable, Equatable, Sendable {
     let id: UUID
     let senderID: UUID
     let senderName: String
     let text: String
     let sentAt: Date
+    var chatID: UUID
+
+    func envelope(sequence: UInt64) throws -> PeerEnvelope {
+        _ = try TextMessage(text: text)
+        return PeerEnvelope(
+            id: id,
+            senderID: senderID,
+            sequence: sequence,
+            sentAt: sentAt,
+            body: .chatText(self)
+        )
+    }
 }
 
 enum PeerLinkState: Equatable, Sendable {
@@ -59,17 +73,5 @@ enum PeerLinkState: Equatable, Sendable {
 struct DiscoverySnapshot: Equatable, Sendable {
     var state: NearbyDiscoveryState = .notStarted
     var peers: [DiscoveredPeer] = []
-    var linkStates: [UUID: PeerLinkState] = [:]
     var listenerPort: UInt16?
-    var chatMessages: [ChatMessage] = []
-    var isChatActive = false
-
-    var connectedPeerCount: Int {
-        linkStates.values.count { $0 == .connected }
-    }
-
-    func linkState(for peer: DiscoveredPeer) -> PeerLinkState {
-        guard let peerID = peer.peerID else { return .discovered }
-        return linkStates[peerID] ?? .discovered
-    }
 }
