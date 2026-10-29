@@ -12,7 +12,7 @@ let package = Package(
             exclude: [
                 "Assets.xcassets", "Resources", "SubwayLore.entitlements",
                 "ContentView.swift", "SubwayLoreApp.swift", "Features/NearbySession", "Features/Profile",
-                "Features/Chat/ChatHistoryView.swift", "Features/Chat/ChatSession.swift", "Features/Chat/NewChatView.swift",
+                "Features/Chat/ChatHistoryView.swift", "Features/Chat/ChatSession.swift",
                 "Networking/PeerConnection.swift", "Networking/PeerDiscovery.swift",
                 "Networking/PeerTransport.swift", "Networking/TransportConfiguration.swift"
             ]

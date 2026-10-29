@@ -92,8 +92,9 @@ actor ChatStore {
     func history(for peerID: UUID) throws -> [ChatHistoryEntry] {
         let stored = try load()
         let joined = Set(stored.memberships.filter { $0.localPeerID == peerID }.map(\.chatID))
-        return try stored.chats.filter { joined.contains($0.id) }.map {
-            ChatHistoryEntry(chat: $0, lastMessage: try messages(in: $0.id).last)
+        return try stored.chats.filter { joined.contains($0.id) }.map { chat in
+            let messages = try messages(in: chat.id)
+            return ChatHistoryEntry(chat: chat, lastMessage: messages.last, firstMessage: messages.first)
         }.sorted {
             $0.lastActivityAt == $1.lastActivityAt ? $0.id.uuidString < $1.id.uuidString : $0.lastActivityAt > $1.lastActivityAt
         }

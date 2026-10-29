@@ -45,11 +45,6 @@ final class SubwayLoreUITests: XCTestCase {
         landing.lifetime = .keepAlways
         add(landing)
         newChat.tap()
-        let name = app.textFields["chatTitle"]
-        XCTAssertTrue(name.waitForExistence(timeout: 5))
-        name.tap()
-        name.typeText("Morning commute test")
-        app.buttons["createChat"].tap()
         let composer = app.textViews["messageComposer"]
         let field = app.textFields["messageComposer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 5) || field.exists)
@@ -57,7 +52,7 @@ final class SubwayLoreUITests: XCTestCase {
         input.tap()
         input.typeText("A saved message")
         app.buttons["sendMessage"].tap()
-        XCTAssertTrue(app.staticTexts["A saved message"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["A saved message"].firstMatch.waitForExistence(timeout: 5))
         app.terminate()
         app.launch()
         if app.buttons["Not now"].waitForExistence(timeout: 2) { app.buttons["Not now"].tap() }
@@ -65,10 +60,10 @@ final class SubwayLoreUITests: XCTestCase {
         XCTAssertTrue(history.waitForExistence(timeout: 5))
         if !history.isHittable { app.swipeUp() }
         history.tap()
-        let savedChat = app.staticTexts["Morning commute test"]
+        let savedChat = app.staticTexts["A saved message"].firstMatch
         XCTAssertTrue(savedChat.waitForExistence(timeout: 5))
         savedChat.tap()
-        XCTAssertTrue(app.staticTexts["A saved message"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["A saved message"].firstMatch.waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["Join / Resume chat"].exists)
         let preview = XCTAttachment(screenshot: app.screenshot())
         preview.name = "Saved chat preview after relaunch"

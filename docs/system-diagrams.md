@@ -8,7 +8,7 @@ These diagrams describe the chat-ID-based PoC. Games remain Coming Soon. There i
 flowchart TB
     subgraph UI["SwiftUI presentation"]
         Landing["ContentView<br/>nearby map + four cards"]
-        Create["NewChatView"]
+        Create["New Chat: immediate creation"]
         History["ChatHistoryView"]
         ChatUI["NearbySessionView<br/>participants, history, composer"]
         Profile["ProfileView"]
@@ -162,11 +162,11 @@ Inventory pages request only missing records. Transfers run separately from the 
 | Live Chats | Up to three live rows, automatic admission when tapped |
 | History button | Saved joined chats with previews and locally observed live/inactive status |
 | Saved chat preview | Read-only history until Join / Resume is selected |
-| New Chat | Name form, new UUID, persist and advertise |
+| New Chat | Open immediately with a new UUID; initially creator’s first name or “New chat,” then a first-message excerpt |
 | Live Games / New Game | Inactive Coming Soon placeholders |
 | Chat back navigation | Close connections and remove own chat advertisement; preserve history |
 
-Chat messages have a chat ID, stable message ID, sender UUID/name, text, and original timestamp. Chats have an immutable ID, title, creation time, and creator attribution. Membership records track which chats this installation joined. Stored data is a versioned JSON document written atomically under Application Support.
+Chat messages have a chat ID, stable message ID, sender UUID/name, text, and original timestamp. Chats have an immutable ID, initial fallback title, creation time, and creator attribution. The displayed title is derived from the first message (timestamp, then message ID), normalized to one line and limited to 40 characters and 240 UTF-8 bytes for Bonjour. Later messages update the separate history preview, not the title. Synchronizing an earlier message can reconcile the first-message title across devices. Membership records track which chats this installation joined. Stored data is a versioned JSON document written atomically under Application Support.
 
 ## Validation and limitations
 

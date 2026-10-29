@@ -9,6 +9,7 @@ actor PeerDiscovery {
     private let diagnostics: DiagnosticsRecorder
     private let incomingHandler: @Sendable (NetworkConnection<TLS>) async -> Void
     private var advertisedChat: Chat?
+    private var advertisedTitle: String?
 
     private var listener: NetworkListener<TLS>?
     private var browser: NetworkBrowser<Bonjour>?
@@ -76,8 +77,11 @@ actor PeerDiscovery {
         record(.info, "Nearby discovery stopped")
     }
 
-    func advertise(_ chat: Chat?) async {
+    func advertise(_ chat: Chat?, displayTitle: String? = nil) async {
+        let title = chat.map { ChatTitle.excerpt(displayTitle ?? $0.title) }
+        guard advertisedChat != chat || advertisedTitle != title else { return }
         advertisedChat = chat
+        advertisedTitle = title
         listenerGeneration = UUID()
         listenerTask?.cancel()
         listener = nil
@@ -96,7 +100,7 @@ actor PeerDiscovery {
             ]
             if let chat = advertisedChat {
                 txt["chatID"] = chat.id.uuidString
-                txt["chatTitle"] = chat.title
+                txt["chatTitle"] = advertisedTitle ?? chat.title
             }
             let provider = BonjourListenerProvider.bonjour(
                 name: identity.displayName,

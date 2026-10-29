@@ -5,6 +5,34 @@ struct Chat: Codable, Hashable, Identifiable, Sendable {
     let title: String
     let createdAt: Date
     let createdByPeerID: UUID
+
+    static func make(for identity: PeerIdentity) -> Chat {
+        let firstName = (identity.firstName ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let name = ChatTitle.excerpt(firstName, characterLimit: 32, byteLimit: 70)
+        return Chat(id: UUID(), title: name.isEmpty ? "New chat" : "\(name)’s chat",
+                    createdAt: Date(), createdByPeerID: identity.id)
+    }
+
+    func displayTitle(messages: [ChatMessage]) -> String {
+        let first = messages.filter { $0.chatID == id }.min {
+            $0.sentAt == $1.sentAt ? $0.id.uuidString < $1.id.uuidString : $0.sentAt < $1.sentAt
+        }
+        guard let first else { return title }
+        let excerpt = ChatTitle.excerpt(first.text)
+        return excerpt.isEmpty ? title : excerpt
+    }
+}
+
+enum ChatTitle {
+    static func excerpt(_ text: String, characterLimit: Int = 40, byteLimit: Int = 240) -> String {
+        let normalized = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        var result = ""
+        for character in normalized.prefix(characterLimit) {
+            guard result.utf8.count + String(character).utf8.count <= byteLimit else { break }
+            result.append(character)
+        }
+        return result
+    }
 }
 
 struct ChatMembership: Codable, Equatable, Sendable {
@@ -51,6 +79,7 @@ struct ChatSnapshot: Equatable, Sendable {
     var state: ChatSessionState = .idle
     var isSynchronizing = false
     var error: String?
+    var displayTitle: String { chat?.displayTitle(messages: messages) ?? "Chat" }
     var isActive: Bool {
         switch state {
         case .joining, .joined: true
@@ -64,5 +93,7 @@ struct ChatHistoryEntry: Identifiable, Equatable, Sendable {
     var id: UUID { chat.id }
     let chat: Chat
     let lastMessage: ChatMessage?
+    var firstMessage: ChatMessage? = nil
+    var displayTitle: String { chat.displayTitle(messages: firstMessage.map { [$0] } ?? []) }
     var lastActivityAt: Date { lastMessage?.sentAt ?? chat.createdAt }
 }
