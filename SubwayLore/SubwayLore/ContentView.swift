@@ -41,7 +41,10 @@ struct ContentView: View {
                 NearbySessionView(model: appModel, chat: chat)
             }
             .navigationDestination(item: $appModel.presentedGame) { game in
-                TimeItGameView(model: appModel, lobby: game)
+                switch game.kind {
+                case .timeIt: TimeItGameView(model: appModel, lobby: game)
+                case .subwayTrivia: TriviaGameView(model: appModel, lobby: game)
+                }
             }
         }
         .preferredColorScheme(.dark)
@@ -64,7 +67,7 @@ struct ContentView: View {
         }
         .sheet(isPresented: $showsGamePicker) {
             GamePickerView(model: appModel)
-                .presentationDetents([.height(400), .large])
+                .presentationDetents([.height(440), .large])
                 .presentationBackground(Color.loreInk)
                 .presentationCornerRadius(28)
                 .presentationDragIndicator(.visible)

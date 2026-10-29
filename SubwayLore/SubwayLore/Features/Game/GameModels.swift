@@ -2,8 +2,12 @@ import Foundation
 
 enum GameKind: String, Codable, CaseIterable, Sendable {
     case timeIt
+    case subwayTrivia
     var title: String {
-        switch self { case .timeIt: "Time |t!" }
+        switch self {
+        case .timeIt: "Time |t!"
+        case .subwayTrivia: "Subway Trivia"
+        }
     }
 }
 
@@ -32,9 +36,9 @@ struct DiscoveredGame: Identifiable, Equatable, Sendable {
         var games: [UUID: DiscoveredGame] = [:]
         for peer in peers {
             guard let id = peer.gameID, let host = peer.gameHostID, host == peer.peerID,
-                  peer.gameKind == GameKind.timeIt.rawValue,
+                  let rawKind = peer.gameKind, let kind = GameKind(rawValue: rawKind),
                   (1...GameLobby.maximumPlayers).contains(peer.gamePlayerCount) else { continue }
-            games[id] = DiscoveredGame(lobby: GameLobby(id: id, kind: .timeIt, hostPeerID: host,
+            games[id] = DiscoveredGame(lobby: GameLobby(id: id, kind: kind, hostPeerID: host,
                 hostDisplayName: peer.displayName, createdAt: .distantPast),
                 playerCount: peer.gamePlayerCount, isJoinable: peer.gameIsJoinable)
         }
@@ -91,6 +95,7 @@ struct GamePacket: Codable, Equatable, Sendable {
 }
 
 enum GameEvent: Codable, Equatable, Sendable {
+    case trivia(TriviaEvent)
     case roster([GamePlayer])
     case prepare(TimeItRound)
     case prepared(UUID)

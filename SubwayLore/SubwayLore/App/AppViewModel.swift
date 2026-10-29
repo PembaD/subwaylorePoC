@@ -7,6 +7,7 @@ final class AppViewModel: ObservableObject {
     @Published private(set) var identity: PeerIdentity
     @Published var presentedChat: Chat?
     @Published private(set) var gameSnapshot = GameSnapshot()
+    @Published private(set) var triviaSnapshot = TriviaSnapshot()
     @Published var presentedGame: GameLobby?
     @Published private(set) var completedRounds: [CompletedRound] = []
     @Published private(set) var leaderboardError: String?
@@ -16,9 +17,11 @@ final class AppViewModel: ObservableObject {
     private let coordinator: ActivityCoordinator
     private let session: ChatSession
     private let gameSession: GameSession
+    private let triviaSession: TriviaSession
     private var monitorTask: Task<Void, Never>?
     private var chatTask: Task<Void, Never>?
     private var gameTask: Task<Void, Never>?
+    private var triviaTask: Task<Void, Never>?
 
     var liveGames: [DiscoveredGame] { DiscoveredGame.aggregate(snapshot.peers) }
 
@@ -33,7 +36,7 @@ final class AppViewModel: ObservableObject {
 
     init(identityStore: PeerIdentityStore = PeerIdentityStore(),
          diagnostics: DiagnosticsRecorder = DiagnosticsRecorder(), store: ChatStore = ChatStore(),
-         resultsStore: GameResultsStore = .persistent()) {
+         resultsStore: GameResultsStore = .persistent(), questionHistoryStore: TriviaQuestionHistoryStore = .persistent()) {
         let identity = identityStore.loadOrCreate()
         self.identityStore = identityStore
         self.identity = identity
@@ -47,10 +50,20 @@ final class AppViewModel: ObservableObject {
         self.coordinator = coordinator
         self.session = ChatSession(identity: identity, store: store, coordinator: coordinator)
         self.gameSession = GameSession(identity: identity, coordinator: coordinator, resultsStore: resultsStore)
+        self.triviaSession = TriviaSession(identity: identity, coordinator: coordinator, resultsStore: resultsStore,
+                                           questionHistoryStore: questionHistoryStore)
     }
 
     func start() {
         guard monitorTask == nil else { return }
+        triviaTask = Task { [weak self] in
+            guard let self else { return }
+            for await value in await triviaSession.snapshots() {
+                guard !Task.isCancelled else { return }
+                triviaSnapshot = value
+                if value.outcome != nil { await refreshLeaderboard() }
+            }
+        }
         gameTask = Task { [weak self] in
             guard let self else { return }
             await refreshLeaderboard()
@@ -78,6 +91,7 @@ final class AppViewModel: ObservableObject {
                 snapshot = value
                 await session.updatePeers(value.peers)
                 await gameSession.updatePeers(value.peers)
+                await triviaSession.updatePeers(value.peers)
             }
         }
     }
@@ -95,9 +109,11 @@ final class AppViewModel: ObservableObject {
         monitorTask?.cancel()
         chatTask?.cancel()
         gameTask?.cancel()
+        triviaTask?.cancel()
         monitorTask = nil
         chatTask = nil
         gameTask = nil
+        triviaTask = nil
         Task {
             await coordinator.deactivate()
             await discovery.stop()
@@ -128,13 +144,25 @@ final class AppViewModel: ObservableObject {
         try await session.resume(chat)
     }
 
-    func createGame() async throws {
-        presentedGame = try await gameSession.create()
+    func createGame(kind: GameKind = .timeIt) async throws {
+        switch kind {
+        case .timeIt: presentedGame = try await gameSession.create()
+        case .subwayTrivia: presentedGame = try await triviaSession.create()
+        }
     }
 
     func joinGame(_ game: DiscoveredGame) async throws {
-        presentedGame = try await gameSession.join(game)
+        switch game.lobby.kind {
+        case .timeIt: presentedGame = try await gameSession.join(game)
+        case .subwayTrivia: presentedGame = try await triviaSession.join(game)
+        }
     }
+
+    func startTrivia() async throws { try await triviaSession.start() }
+    func submitTriviaAnswer(_ option: Int?, roundID: UUID, questionIndex: Int) async throws {
+        try await triviaSession.submit(option: option, roundID: roundID, questionIndex: questionIndex)
+    }
+    func leaveTrivia(_ gameID: UUID) { Task { await triviaSession.leave(gameID: gameID) } }
 
     func startGameRound() async throws { try await gameSession.startRound() }
     func markGameRunning(_ roundID: UUID) async { await gameSession.markRunning(roundID: roundID) }
@@ -160,6 +188,7 @@ final class AppViewModel: ObservableObject {
         await coordinator.deactivate()
         await session.updateIdentity(updated)
         await gameSession.updateIdentity(updated)
+        await triviaSession.updateIdentity(updated)
         await discovery.updateIdentity(updated)
     }
 }

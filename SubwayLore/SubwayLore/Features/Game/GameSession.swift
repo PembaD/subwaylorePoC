@@ -58,7 +58,7 @@ actor GameSession {
     }
 
     func join(_ game: DiscoveredGame) async throws -> GameLobby {
-        guard game.isJoinable, game.playerCount < GameLobby.maximumPlayers else { throw TimeItError.gameFull }
+        guard game.lobby.kind == .timeIt, game.isJoinable, game.playerCount < GameLobby.maximumPlayers else { throw TimeItError.gameFull }
         await leave()
         snapshot = GameSnapshot(lobby: game.lobby,
             players: [GamePlayer(id: identity.id, displayName: identity.displayName, isConnected: false)], phase: .lobby)
