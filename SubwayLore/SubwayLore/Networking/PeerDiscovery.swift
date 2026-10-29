@@ -10,6 +10,12 @@ actor PeerDiscovery {
     private let incomingHandler: @Sendable (NetworkConnection<TLS>) async -> Void
     private var advertisedChat: Chat?
     private var advertisedTitle: String?
+    private struct GameAdvertisement: Equatable {
+        let lobby: GameLobby
+        let playerCount: Int
+        let isJoinable: Bool
+    }
+    private var advertisedGame: GameAdvertisement?
 
     private var listener: NetworkListener<TLS>?
     private var browser: NetworkBrowser<Bonjour>?
@@ -79,9 +85,23 @@ actor PeerDiscovery {
 
     func advertise(_ chat: Chat?, displayTitle: String? = nil) async {
         let title = chat.map { ChatTitle.excerpt(displayTitle ?? $0.title) }
-        guard advertisedChat != chat || advertisedTitle != title else { return }
+        guard advertisedChat != chat || advertisedTitle != title || advertisedGame != nil else { return }
         advertisedChat = chat
         advertisedTitle = title
+        advertisedGame = nil
+        restartListener()
+    }
+
+    func advertiseGame(_ game: GameLobby?, playerCount: Int = 0, isJoinable: Bool = false) {
+        let advertisement = game.map { GameAdvertisement(lobby: $0, playerCount: playerCount, isJoinable: isJoinable) }
+        guard advertisedGame != advertisement || advertisedChat != nil else { return }
+        advertisedGame = advertisement
+        advertisedChat = nil
+        advertisedTitle = nil
+        restartListener()
+    }
+
+    private func restartListener() {
         listenerGeneration = UUID()
         listenerTask?.cancel()
         listener = nil
@@ -101,6 +121,13 @@ actor PeerDiscovery {
             if let chat = advertisedChat {
                 txt["chatID"] = chat.id.uuidString
                 txt["chatTitle"] = advertisedTitle ?? chat.title
+            }
+            if let game = advertisedGame {
+                txt["gameID"] = game.lobby.id.uuidString
+                txt["gameHost"] = game.lobby.hostPeerID.uuidString
+                txt["gameKind"] = game.lobby.kind.rawValue
+                txt["gamePlayers"] = String(game.playerCount)
+                txt["gameJoinable"] = game.isJoinable ? "1" : "0"
             }
             let provider = BonjourListenerProvider.bonjour(
                 name: identity.displayName,
@@ -221,7 +248,13 @@ actor PeerDiscovery {
                     domain: endpoint.domain,
                     chatID: endpoint.txtRecord["protocolVersion"] == String(PeerEnvelope.currentProtocolVersion)
                         ? endpoint.txtRecord["chatID"].flatMap(UUID.init(uuidString:)) : nil,
-                    chatTitle: endpoint.txtRecord["chatTitle"]
+                    chatTitle: endpoint.txtRecord["chatTitle"],
+                    gameID: endpoint.txtRecord["protocolVersion"] == String(PeerEnvelope.currentProtocolVersion)
+                        ? endpoint.txtRecord["gameID"].flatMap(UUID.init(uuidString:)) : nil,
+                    gameHostID: endpoint.txtRecord["gameHost"].flatMap(UUID.init(uuidString:)),
+                    gameKind: endpoint.txtRecord["gameKind"],
+                    gamePlayerCount: endpoint.txtRecord["gamePlayers"].flatMap(Int.init) ?? 0,
+                    gameIsJoinable: endpoint.txtRecord["gameJoinable"] == "1"
                 )
             }
         let changes = reducer.replacePeers(

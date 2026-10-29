@@ -11,10 +11,11 @@ let package = Package(
             path: "SubwayLore/SubwayLore",
             exclude: [
                 "Assets.xcassets", "Resources", "SubwayLore.entitlements",
-                "ContentView.swift", "SubwayLoreApp.swift", "Features/NearbySession", "Features/Profile",
-                "Features/Chat/ChatHistoryView.swift", "Features/Chat/ChatSession.swift",
+                "ContentView.swift", "SubwayLoreApp.swift", "App", "Features/NearbySession", "Features/Profile",
+                "Features/Chat/ChatHistoryView.swift",
+                "Features/Game/GamePickerView.swift", "Features/Game/TimeItGameView.swift",
                 "Networking/PeerConnection.swift", "Networking/PeerDiscovery.swift",
-                "Networking/PeerTransport.swift", "Networking/TransportConfiguration.swift"
+                "Networking/PeerTransport.swift", "Networking/TransportConfiguration.swift", "Networking/NetworkActivityTransport.swift"
             ]
         ),
         .testTarget(name: "SubwayLoreTests", dependencies: ["SubwayLore"], path: "SubwayLore/SubwayLoreTests")

@@ -56,14 +56,6 @@ struct DiscoveredChat: Identifiable, Equatable, Sendable {
     }
 }
 
-struct ChatParticipant: Identifiable, Equatable, Sendable {
-    var id: UUID { peerID }
-    let chatID: UUID
-    let peerID: UUID
-    let displayName: String
-    let state: PeerLinkState
-}
-
 enum ChatSessionState: Equatable, Sendable {
     case idle
     case joining(UUID)
@@ -75,7 +67,7 @@ struct ChatSnapshot: Equatable, Sendable {
     var history: [ChatHistoryEntry] = []
     var chat: Chat?
     var messages: [ChatMessage] = []
-    var participants: [ChatParticipant] = []
+    var participants: [ActivityParticipant] = []
     var state: ChatSessionState = .idle
     var isSynchronizing = false
     var error: String?

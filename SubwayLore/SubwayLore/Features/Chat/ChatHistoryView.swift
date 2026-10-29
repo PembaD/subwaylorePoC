@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ChatHistoryView: View {
-    @ObservedObject var model: NearbySessionViewModel
+    @ObservedObject var model: AppViewModel
     @Environment(\.dismiss) private var dismiss
     @State private var error: String?
 

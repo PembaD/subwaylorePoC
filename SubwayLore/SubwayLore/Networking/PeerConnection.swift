@@ -1,31 +1,13 @@
 import Foundation
 import Network
 
-struct ConnectedPeer: Equatable, Sendable {
-    let id: UUID
-    let displayName: String
-    let capabilities: [String]
-    let chat: Chat
-}
-
-enum PeerConnectionError: Error, Equatable, Sendable {
-    case connectionClosed
-    case expectedHello
-    case invalidHelloSender
-    case unexpectedPeer(expected: UUID, received: UUID)
-    case invalidHelloAcceptance
-    case handshakeIncomplete
-    case admissionRejected(String)
-    case wrongChat
-}
-
 actor PeerConnection {
     let id: UUID
     let direction: ConnectionDirection
 
     private let connection: NetworkConnection<TLS>
     private let localIdentity: PeerIdentity
-    private let localChat: Chat
+    private let localActivity: ActivityDescriptor
     private let expectedPeerID: UUID?
     private let diagnostics: DiagnosticsRecorder
     private let messageHandler: @Sendable (PeerEnvelope) async -> Void
@@ -41,7 +23,7 @@ actor PeerConnection {
         connection: NetworkConnection<TLS>,
         direction: ConnectionDirection,
         localIdentity: PeerIdentity,
-        chat: Chat,
+        activity: ActivityDescriptor,
         expectedPeerID: UUID?,
         diagnostics: DiagnosticsRecorder,
         admissionCheck: @escaping @Sendable (UUID) async -> String?,
@@ -51,7 +33,7 @@ actor PeerConnection {
         self.connection = connection
         self.direction = direction
         self.localIdentity = localIdentity
-        self.localChat = chat
+        self.localActivity = activity
         self.expectedPeerID = expectedPeerID
         self.diagnostics = diagnostics
         self.messageHandler = messageHandler
@@ -62,74 +44,74 @@ actor PeerConnection {
         let requestID = UUID()
         try await send(.hello(HelloMessage(
             peerID: localIdentity.id, displayName: localIdentity.displayName,
-            capabilities: ["chats-v2", "history"]
+            capabilities: ["activities-v3", "history", "timeIt"]
         )))
         var hello: HelloMessage?
         var acceptanceSender: UUID?
-        var acceptedChat: Chat?
+        var acceptedActivity: ActivityDescriptor?
         var answeredRequest = false
-        while hello == nil || acceptanceSender == nil || acceptedChat == nil || !answeredRequest {
+        while hello == nil || acceptanceSender == nil || acceptedActivity == nil || !answeredRequest {
             for envelope in try await receiveEnvelopes() {
                 try envelope.validateProtocolVersion()
                 switch envelope.body {
                 case .hello(let value):
                     guard hello == nil, envelope.senderID == value.peerID,
                           value.peerID != localIdentity.id else {
-                        throw PeerConnectionError.invalidHelloSender
+                        throw PeerProtocolError.invalidHelloSender
                     }
                     if let expectedPeerID, expectedPeerID != value.peerID {
-                        throw PeerConnectionError.unexpectedPeer(expected: expectedPeerID, received: value.peerID)
+                        throw PeerProtocolError.unexpectedPeer(expected: expectedPeerID, received: value.peerID)
                     }
                     hello = value
                     try await send(.helloAccepted(HelloAcceptedMessage(peerID: localIdentity.id)))
-                    try await send(.joinChatRequest(JoinChatRequest(chatID: localChat.id, requestID: requestID)))
+                    try await send(.joinActivityRequest(ActivityJoinRequest(activity: localActivity, requestID: requestID)))
                 case .helloAccepted(let value):
                     guard envelope.senderID == value.peerID else {
-                        throw PeerConnectionError.invalidHelloAcceptance
+                        throw PeerProtocolError.invalidHelloAcceptance
                     }
                     acceptanceSender = value.peerID
-                case .joinChatRequest(let request):
+                case .joinActivityRequest(let request):
                     guard let hello, hello.peerID == envelope.senderID else {
-                        throw PeerConnectionError.expectedHello
+                        throw PeerProtocolError.expectedHello
                     }
-                    guard request.chatID == localChat.id else {
-                        try await send(.joinChatRejected(JoinChatRejected(
-                            requestID: request.requestID, reason: "Chat is no longer available"
+                    guard request.activity.matches(localActivity) else {
+                        try await send(.joinActivityRejected(ActivityJoinRejected(
+                            requestID: request.requestID, reason: "Activity is no longer available"
                         )))
-                        throw PeerConnectionError.wrongChat
+                        throw PeerProtocolError.wrongActivity
                     }
                     if let reason = await admissionCheck(hello.peerID) {
-                        try await send(.joinChatRejected(JoinChatRejected(requestID: request.requestID, reason: reason)))
-                        throw PeerConnectionError.admissionRejected(reason)
+                        try await send(.joinActivityRejected(ActivityJoinRejected(requestID: request.requestID, reason: reason)))
+                        throw PeerProtocolError.admissionRejected(reason)
                     }
                     answeredRequest = true
-                    try await send(.joinChatAccepted(JoinChatAccepted(requestID: request.requestID, chat: localChat)))
-                case .joinChatAccepted(let accepted):
+                    try await send(.joinActivityAccepted(ActivityJoinAccepted(activity: localActivity, requestID: request.requestID)))
+                case .joinActivityAccepted(let accepted):
                     guard let hello, envelope.senderID == hello.peerID,
                           accepted.requestID == requestID,
-                          accepted.chat.id == localChat.id else { throw PeerConnectionError.wrongChat }
-                    acceptedChat = accepted.chat
-                case .joinChatRejected(let rejected):
-                    guard rejected.requestID == requestID else { throw PeerConnectionError.wrongChat }
-                    throw PeerConnectionError.admissionRejected(rejected.reason)
+                          accepted.activity.matches(localActivity) else { throw PeerProtocolError.wrongActivity }
+                    acceptedActivity = accepted.activity
+                case .joinActivityRejected(let rejected):
+                    guard rejected.requestID == requestID else { throw PeerProtocolError.wrongActivity }
+                    throw PeerProtocolError.admissionRejected(rejected.reason)
                 default:
                     // A fast remote may send history alongside the final handshake frames.
                     pendingEnvelopes.append(envelope)
                 }
             }
         }
-        guard let hello, acceptanceSender == hello.peerID, let acceptedChat else {
-            throw PeerConnectionError.handshakeIncomplete
+        guard let hello, acceptanceSender == hello.peerID, let acceptedActivity else {
+            throw PeerProtocolError.handshakeIncomplete
         }
         let peer = ConnectedPeer(id: hello.peerID, displayName: hello.displayName,
-                                 capabilities: hello.capabilities, chat: acceptedChat)
+                                 capabilities: hello.capabilities, activity: acceptedActivity)
         remotePeer = peer
-        record(.info, "Chat admission complete", remotePeerID: peer.id)
+        record(.info, "Activity admission complete", remotePeerID: peer.id)
         return peer
     }
 
     func receiveUntilClosed() async throws {
-        guard let remotePeer else { throw PeerConnectionError.handshakeIncomplete }
+        guard let remotePeer else { throw PeerProtocolError.handshakeIncomplete }
 
         while !Task.isCancelled && !isClosed {
             let envelopes: [PeerEnvelope]
@@ -142,7 +124,7 @@ actor PeerConnection {
             for envelope in envelopes {
                 try envelope.validateProtocolVersion()
                 guard envelope.senderID == remotePeer.id else {
-                    throw PeerConnectionError.invalidHelloSender
+                    throw PeerProtocolError.invalidHelloSender
                 }
 
                 switch envelope.body {
@@ -150,8 +132,8 @@ actor PeerConnection {
                     record(.info, "Remote peer disconnected", remotePeerID: remotePeer.id)
                     return
                 case .hello, .helloAccepted:
-                    throw PeerConnectionError.expectedHello
-                case .chatText, .historyInventory, .historyRequest, .historyBatch, .historyComplete, .historySyncRequest:
+                    throw PeerProtocolError.expectedHello
+                case .game, .chatText, .historyInventory, .historyRequest, .historyBatch, .historyComplete, .historySyncRequest:
                     await messageHandler(envelope)
                 case .ping(let ping):
                     try await send(.pong(PongMessage(correlationID: ping.correlationID,
@@ -160,7 +142,7 @@ actor PeerConnection {
                 case .pong:
                     await messageHandler(envelope)
                 default:
-                    throw PeerConnectionError.expectedHello
+                    throw PeerProtocolError.expectedHello
                 }
             }
         }
@@ -209,7 +191,7 @@ actor PeerConnection {
             atMost: MessageFramer.maximumPayloadSize + MessageFramer.headerSize
         )
         guard !message.content.isEmpty else {
-            throw PeerConnectionError.connectionClosed
+            throw PeerProtocolError.connectionClosed
         }
 
         let payloads = try decoder.append(message.content)

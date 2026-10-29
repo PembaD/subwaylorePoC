@@ -8,7 +8,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @StateObject private var nearbyModel = NearbySessionViewModel()
+    @StateObject private var appModel = AppViewModel()
     @State private var showsProfile = false
     @State private var hasCheckedProfile = false
     @State private var isProfileSetup = false
@@ -16,6 +16,8 @@ struct ContentView: View {
     @State private var showsHistory = false
     @State private var actionError: String?
     @State private var isJoining = false
+    @State private var showsGamePicker = false
+    @State private var isJoiningGame = false
 
     var body: some View {
         NavigationStack {
@@ -34,16 +36,19 @@ struct ContentView: View {
                 }
             }
             .toolbar(.hidden, for: .navigationBar)
-            .navigationDestination(item: $nearbyModel.presentedChat) { chat in
-                NearbySessionView(model: nearbyModel, chat: chat)
+            .navigationDestination(item: $appModel.presentedChat) { chat in
+                NearbySessionView(model: appModel, chat: chat)
+            }
+            .navigationDestination(item: $appModel.presentedGame) { game in
+                TimeItGameView(model: appModel, lobby: game)
             }
         }
         .preferredColorScheme(.dark)
         .task {
-            nearbyModel.start()
+            appModel.start()
             guard !hasCheckedProfile else { return }
             hasCheckedProfile = true
-            let identity = nearbyModel.identity
+            let identity = appModel.identity
             if (identity.firstName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || (identity.lastName ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 isProfileSetup = true
@@ -51,15 +56,22 @@ struct ContentView: View {
             }
         }
         .sheet(isPresented: $showsHistory) {
-            ChatHistoryView(model: nearbyModel)
+            ChatHistoryView(model: appModel)
         }
-        .alert("Unable to open chat", isPresented: Binding(
+        .sheet(isPresented: $showsGamePicker) {
+            GamePickerView(model: appModel)
+                .presentationDetents([.height(400), .large])
+                .presentationBackground(Color.loreInk)
+                .presentationCornerRadius(28)
+                .presentationDragIndicator(.visible)
+        }
+        .alert("Unable to open activity", isPresented: Binding(
             get: { actionError != nil }, set: { if !$0 { actionError = nil } }
         )) {
             Button("OK") { actionError = nil }
         } message: { Text(actionError ?? "") }
         .sheet(isPresented: $showsProfile) {
-            ProfileView(model: nearbyModel, isInitialSetup: isProfileSetup)
+            ProfileView(model: appModel, isInitialSetup: isProfileSetup)
                 .presentationDetents([.height(570), .large])
                 .presentationBackground(Color.loreInk)
                 .presentationCornerRadius(28)
@@ -122,9 +134,9 @@ struct ContentView: View {
 
     private var nearbyNetwork: some View {
         NearbyNetworkCard(
-            identity: nearbyModel.identity,
-            snapshot: nearbyModel.snapshot,
-            onRefresh: nearbyModel.restart
+            identity: appModel.identity,
+            snapshot: appModel.snapshot,
+            onRefresh: appModel.restart
         )
     }
 
@@ -144,19 +156,19 @@ struct ContentView: View {
                     }
                     .font(.system(size: 13, weight: .bold, design: .rounded))
 
-                    if nearbyModel.liveChats.isEmpty {
+                    if appModel.liveChats.isEmpty {
                         Text("No live chats nearby")
                             .font(.system(size: 12, weight: .medium, design: .rounded))
                             .foregroundStyle(.white.opacity(0.45))
                             .frame(maxWidth: .infinity, minHeight: 110, alignment: .topLeading)
                     } else {
-                        ForEach(nearbyModel.liveChats.prefix(3)) { chat in
+                        ForEach(appModel.liveChats.prefix(3)) { chat in
                             Button {
                                 guard !isJoining else { return }
                                 isJoining = true
                                 Task {
                                     defer { isJoining = false }
-                                    do { try await nearbyModel.joinChat(chat) }
+                                    do { try await appModel.joinChat(chat) }
                                     catch { actionError = "Chat could not be opened. Please try again." }
                                 }
                             } label: {
@@ -180,9 +192,34 @@ struct ContentView: View {
                     Label("Live Games", systemImage: "bolt.fill")
                         .font(.system(size: 13, weight: .bold, design: .rounded))
                         .foregroundStyle(Color.loreOrange)
-                    Text("Games coming soon")
-                        .font(.system(size: 12, weight: .medium, design: .rounded))
-                        .foregroundStyle(.white.opacity(0.45))
+                    if appModel.liveGames.isEmpty {
+                        Text("No live games nearby")
+                            .font(.system(size: 12, weight: .medium, design: .rounded))
+                            .foregroundStyle(.white.opacity(0.45))
+                    } else {
+                        ForEach(appModel.liveGames.prefix(3)) { game in
+                            Button {
+                                guard !isJoiningGame else { return }
+                                isJoiningGame = true
+                                Task {
+                                    defer { isJoiningGame = false }
+                                    do { try await appModel.joinGame(game) }
+                                    catch { actionError = "This game is full or already playing. Try between rounds." }
+                                }
+                            } label: {
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text(game.lobby.kind.title).foregroundStyle(.white)
+                                    Text("\(game.playerCount)/8 · \(game.isJoinable ? "Join" : "Playing / Full")")
+                                        .foregroundStyle(.white.opacity(0.45))
+                                    Text(game.lobby.hostDisplayName).foregroundStyle(.white.opacity(0.4)).lineLimit(1)
+                                }
+                                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(isJoiningGame || !game.isJoinable)
+                        }
+                    }
                 }
                 .frame(maxWidth: .infinity, minHeight: 155, alignment: .topLeading)
                 .loreCard(padding: 14)
@@ -194,7 +231,7 @@ struct ContentView: View {
                     isCreatingChat = true
                     Task {
                         defer { isCreatingChat = false }
-                        do { try await nearbyModel.createChat() }
+                        do { try await appModel.createChat() }
                         catch { actionError = "Chat could not be created. Please try again." }
                     }
                 } label: {
@@ -204,9 +241,13 @@ struct ContentView: View {
                 .buttonStyle(.plain)
                 .disabled(isCreatingChat)
                 .accessibilityIdentifier("newChat")
-                ActivityCard(title: "New Game", detail: "Games coming soon", symbol: "bolt.fill", color: .loreOrange)
+                Button { showsGamePicker = true } label: {
+                    ActivityCard(title: "New Game", detail: "Play with nearby riders", symbol: "bolt.fill", color: .loreOrange)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("newGame")
             }
-            if let error = nearbyModel.chatSnapshot.error {
+            if let error = appModel.chatSnapshot.error {
                 Text(error).font(.caption).foregroundStyle(Color.loreOrange)
             }
         }

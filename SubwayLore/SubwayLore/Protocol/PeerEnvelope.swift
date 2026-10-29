@@ -1,7 +1,7 @@
 import Foundation
 
 struct PeerEnvelope: Codable, Identifiable, Equatable, Sendable {
-    static let currentProtocolVersion: UInt16 = 2
+    static let currentProtocolVersion: UInt16 = 3
 
     let protocolVersion: UInt16
     let id: UUID

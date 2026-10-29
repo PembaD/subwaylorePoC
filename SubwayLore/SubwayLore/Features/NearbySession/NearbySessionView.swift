@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct NearbySessionView: View {
-    @ObservedObject var model: NearbySessionViewModel
+    @ObservedObject var model: AppViewModel
     let chat: Chat
     @State private var draft = ""
     @State private var isSending = false

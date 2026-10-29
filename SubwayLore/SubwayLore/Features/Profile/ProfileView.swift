@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ProfileView: View {
-    @ObservedObject var model: NearbySessionViewModel
+    @ObservedObject var model: AppViewModel
     let isInitialSetup: Bool
     @Environment(\.dismiss) private var dismiss
     @State private var firstName: String
@@ -14,7 +14,7 @@ struct ProfileView: View {
         case first, last
     }
 
-    init(model: NearbySessionViewModel, isInitialSetup: Bool = false) {
+    init(model: AppViewModel, isInitialSetup: Bool = false) {
         self.model = model
         self.isInitialSetup = isInitialSetup
         _firstName = State(initialValue: model.identity.firstName ?? "")
