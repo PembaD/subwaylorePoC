@@ -183,7 +183,6 @@ actor PeerTransport {
                 await diagnostics.record(severity: .warning, category: .connection,
                     localPeerID: identity?.id ?? UUID(), connectionID: id,
                     summary: "Chat connection ended", metadata: ["error": String(describing: error)])
-                await handler?(.issue("A rider could not be reached. Retrying nearby connections."))
             }
         }
         await finish(id, generation: expected)

@@ -40,7 +40,7 @@ struct NearbySessionView: View {
                 }
             }
         }
-        .navigationTitle(model.chatSnapshot.chat?.title ?? chat.title)
+        .navigationTitle(model.chatSnapshot.chat == nil ? chat.title : model.chatSnapshot.displayTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.visible, for: .navigationBar)
         .onDisappear { model.leaveChat(chat.id) }

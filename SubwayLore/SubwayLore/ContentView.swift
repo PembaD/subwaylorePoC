@@ -12,7 +12,7 @@ struct ContentView: View {
     @State private var showsProfile = false
     @State private var hasCheckedProfile = false
     @State private var isProfileSetup = false
-    @State private var showsNewChat = false
+    @State private var isCreatingChat = false
     @State private var showsHistory = false
     @State private var actionError: String?
     @State private var isJoining = false
@@ -49,11 +49,6 @@ struct ContentView: View {
                 isProfileSetup = true
                 showsProfile = true
             }
-        }
-        .sheet(isPresented: $showsNewChat) {
-            NewChatView(model: nearbyModel)
-                .presentationDetents([.height(420), .large])
-                .presentationBackground(Color.loreInk)
         }
         .sheet(isPresented: $showsHistory) {
             ChatHistoryView(model: nearbyModel)
@@ -94,14 +89,6 @@ struct ContentView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 15) {
             HStack {
-                Label("OFFLINE READY", systemImage: "dot.radiowaves.left.and.right")
-                    .font(.system(size: 11, weight: .bold, design: .rounded))
-                    .tracking(0.7)
-                    .foregroundStyle(Color.loreGreen)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .background(Color.loreGreen.opacity(0.12), in: Capsule())
-
                 Spacer()
 
                 Button {
@@ -202,11 +189,20 @@ struct ContentView: View {
             }
 
             HStack(spacing: 12) {
-                Button { showsNewChat = true } label: {
-                    ActivityCard(title: "New Chat", detail: "Start a conversation",
+                Button {
+                    guard !isCreatingChat else { return }
+                    isCreatingChat = true
+                    Task {
+                        defer { isCreatingChat = false }
+                        do { try await nearbyModel.createChat() }
+                        catch { actionError = "Chat could not be created. Please try again." }
+                    }
+                } label: {
+                    ActivityCard(title: "New Chat", detail: isCreatingChat ? "Opening…" : "Start a conversation",
                                  symbol: "plus.bubble.fill", color: .loreBlue)
                 }
                 .buttonStyle(.plain)
+                .disabled(isCreatingChat)
                 .accessibilityIdentifier("newChat")
                 ActivityCard(title: "New Game", detail: "Games coming soon", symbol: "bolt.fill", color: .loreOrange)
             }

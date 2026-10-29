@@ -43,12 +43,8 @@ actor ChatSession {
         self.identity = identity
     }
 
-    func create(title: String) async throws -> Chat {
-        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty, trimmed.utf8.count <= 80 else {
-            throw PeerConnectionError.admissionRejected("Use a chat name of 80 bytes or less.")
-        }
-        let chat = Chat(id: UUID(), title: trimmed, createdAt: Date(), createdByPeerID: identity.id)
+    func create() async throws -> Chat {
+        let chat = Chat.make(for: identity)
         try await resume(chat)
         return chat
     }
@@ -94,7 +90,7 @@ actor ChatSession {
             handler: { [weak self] event in await self?.handle(event, generation: expected) })
         guard expected == generation else { return }
         await transport.updatePeers(peers)
-        if member { await discovery.advertise(chat) }
+        if member { await discovery.advertise(chat, displayTitle: snapshot.displayTitle) }
         await loadHistory()
     }
 
@@ -158,7 +154,7 @@ actor ChatSession {
                     snapshot.state = .joined(peer.chat.id)
                     await transport.adoptChat(peer.chat)
                     // Future handshakes must advertise canonical metadata, never the initial hint.
-                    await discovery.advertise(peer.chat)
+                    await discovery.advertise(peer.chat, displayTitle: snapshot.displayTitle)
                 }
                 snapshot.error = nil
                 Task { [weak self] in await self?.sendInventory(to: peer.id, generation: expected) }
@@ -276,9 +272,13 @@ actor ChatSession {
         let messages = try await store.messages(in: chatID)
         let history = try await store.history(for: identity.id)
         guard snapshot.chat?.id == chatID else { return }
+        let previousTitle = snapshot.displayTitle
         snapshot.messages = messages
         snapshot.history = history
         publish()
+        if previousTitle != snapshot.displayTitle, snapshot.isActive, hasMembership, let chat = snapshot.chat {
+            await discovery.advertise(chat, displayTitle: snapshot.displayTitle)
+        }
     }
 
     private func publish() { continuation?.yield(snapshot) }

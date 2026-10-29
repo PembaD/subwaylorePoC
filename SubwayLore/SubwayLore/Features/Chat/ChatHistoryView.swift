@@ -52,7 +52,7 @@ private struct ChatHistoryRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(entry.chat.title).font(.headline).foregroundStyle(Color.white)
+            Text(entry.displayTitle).font(.headline).foregroundStyle(Color.white)
             Text(isLive ? "Live nearby" : "Inactive nearby")
                 .font(.caption2).foregroundStyle(Color.loreGreen)
             Text(entry.lastMessage?.text ?? "No messages yet")

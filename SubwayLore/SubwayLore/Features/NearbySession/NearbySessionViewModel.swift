@@ -16,7 +16,7 @@ final class NearbySessionViewModel: ObservableObject {
         var chats = DiscoveredChat.aggregate(snapshot.peers)
         if chatSnapshot.isActive, let local = chatSnapshot.chat,
            !chats.contains(where: { $0.id == local.id }) {
-            chats.append(DiscoveredChat(id: local.id, title: local.title, advertisingPeerIDs: []))
+            chats.append(DiscoveredChat(id: local.id, title: chatSnapshot.displayTitle, advertisingPeerIDs: []))
         }
         return chats.sorted { $0.id.uuidString < $1.id.uuidString }
     }
@@ -74,8 +74,8 @@ final class NearbySessionViewModel: ObservableObject {
         }
     }
 
-    func createChat(title: String) async throws {
-        presentedChat = try await session.create(title: title)
+    func createChat() async throws {
+        presentedChat = try await session.create()
     }
 
     func joinChat(_ chat: DiscoveredChat) async throws {
